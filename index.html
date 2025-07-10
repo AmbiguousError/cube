@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rubik's Cube Solver</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- NOTE: The Kociemba solver library is now loaded inside the Web Worker -->
+    <!-- The Kociemba solver library, loaded directly -->
+    <script src="https://cdn.jsdelivr.net/npm/cubejs/dist/cube.min.js"></script>
     <style>
         /* Using Inter font from Google Fonts */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
@@ -172,7 +173,6 @@
         let mainCubeState = {};
         let solutionStates = [];
         let isSolverInitialized = false;
-        let solverWorker;
 
         // --- Cube Creation and Initialization ---
         function createCubeDOM(parentElement, isInteractive) {
@@ -318,100 +318,71 @@
             return newState;
         }
 
-        // --- Solver Integration with Web Worker ---
-        const workerScript = `
-          // Load the solver library within the worker's scope
-          importScripts('https://cdn.jsdelivr.net/npm/cubejs/dist/cube.min.js');
-
-          self.onmessage = function(e) {
-            const { command, faceletString } = e.data;
-
-            if (command === 'init') {
-              try {
-                Cube.initSolver();
-                self.postMessage({ status: 'ready' });
-              } catch (error) {
-                self.postMessage({ status: 'error', message: 'Initialization failed' });
-              }
-            }
-
-            if (command === 'solve') {
-              try {
-                const cube = Cube.fromString(faceletString);
-                const solution = cube.solve();
-                self.postMessage({ status: 'solved', solution: solution });
-              } catch (error) {
-                self.postMessage({ status: 'error', message: 'Solving failed' });
-              }
-            }
-          };
-        `;
-
+        // --- Solver Integration ---
         function initializeSolver() {
+            if (typeof Cube === 'undefined') {
+                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Solver library not found.</span><br>Please check your internet connection and refresh.`;
+                return;
+            }
+
             solveBtn.disabled = true;
             solveBtn.textContent = "Initializing...";
             solutionDisplay.innerHTML = '<div class="text-center text-gray-500">Solver is initializing, please wait...</div>';
 
-            try {
-                const blob = new Blob([workerScript], { type: 'application/javascript' });
-                const workerUrl = URL.createObjectURL(blob);
-                solverWorker = new Worker(workerUrl);
-
-                solverWorker.onmessage = function(e) {
-                    const { status, solution, message } = e.data;
-                    if (status === 'ready') {
-                        isSolverInitialized = true;
-                        solveBtn.disabled = false;
-                        solveBtn.textContent = "Solve Cube";
-                        solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
-                        URL.revokeObjectURL(workerUrl);
-                    } else if (status === 'solved') {
-                        processSolution(solution);
-                    } else if (status === 'error') {
-                        solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">${message}.</span><br>Please try refreshing the page.`;
-                        solveBtn.textContent = "Solve Cube";
-                        solveBtn.disabled = false;
-                    }
-                };
-                
-                solverWorker.onerror = function(e) {
-                    solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Failed to create solver worker.</span><br>Your browser might not support this feature.`;
-                    console.error('Worker Error:', e);
-                    solveBtn.textContent = "Solve Cube";
+            // Use setTimeout to allow the UI to update before the heavy work starts.
+            setTimeout(() => {
+                try {
+                    // This is the computationally intensive part.
+                    Cube.initSolver();
+                    isSolverInitialized = true;
                     solveBtn.disabled = false;
-                };
-
-                solverWorker.postMessage({ command: 'init' });
-
-            } catch (e) {
-                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Failed to create solver worker.</span><br>Your browser might not support this feature.`;
-                console.error('Worker Creation Error:', e);
-            }
+                    solveBtn.textContent = "Solve Cube";
+                    solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
+                } catch (e) {
+                    solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Error initializing solver.</span><br>Please try refreshing the page.`;
+                    solveBtn.textContent = "Solve Cube";
+                    solveBtn.disabled = false; 
+                    console.error("Solver Initialization Error:", e);
+                }
+            }, 100);
         }
-        
+
         function convertStateToFaceletString(state) {
             const colorMap = { white: 'U', red: 'R', green: 'F', yellow: 'D', orange: 'L', blue: 'B' };
             const URFDLB_order = ['top', 'right', 'front', 'bottom', 'left', 'back'];
             let faceletString = '';
             for (const faceName of URFDLB_order) {
                 for (const color of state[faceName]) {
-                    faceletString += colorMap[color] || 'U';
+                    // Default to the face's own color if a sticker is unassigned
+                    const stickerColor = color || getSolvedState()[faceName][4];
+                    faceletString += colorMap[stickerColor];
                 }
             }
             return faceletString;
         }
 
-        function solveCube() {
+        async function solveCube() {
             if (!isSolverInitialized) {
                 solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Solver not ready.</span><br>Please wait for initialization or refresh the page.`;
                 return;
             }
             solveBtn.disabled = true;
             solveBtn.textContent = "Solving...";
-            solutionDisplay.innerHTML = '<div class="text-center">Solving...</div>';
+            // Allow UI to update before potential freeze
+            await new Promise(resolve => setTimeout(resolve, 50));
 
             const faceletString = convertStateToFaceletString(mainCubeState);
-            solverWorker.postMessage({ command: 'solve', faceletString: faceletString });
+            
+            try {
+                const cube = Cube.fromString(faceletString);
+                const solution = cube.solve();
+                processSolution(solution);
+            } catch (e) {
+                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Could not solve.</span><br>Please ensure the cube is in a valid, solvable state.`;
+                solveBtn.textContent = "Solve Cube";
+                solveBtn.disabled = false;
+                console.error("Solving Error:", e);
+            }
         }
         
         function processSolution(solution) {
