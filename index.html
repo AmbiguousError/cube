@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rubik's Cube Solver</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- The Kociemba solver library, loaded directly -->
+    <!-- Load the solver library here -->
     <script src="https://cdn.jsdelivr.net/npm/cubejs/dist/cube.min.js"></script>
     <style>
         /* Using Inter font from Google Fonts */
@@ -100,11 +100,11 @@
                 <div class="scene" id="scene-main">
                     <div class="cube" id="cube-main"></div>
                 </div>
-                 <div class="flex items-center justify-center gap-2 text-sm text-gray-500">
+                 <div class="flex items-center justify-center gap-2 text-sm text-gray-500 mt-8 mb-4">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-mouse" viewBox="0 0 16 16"><path d="M8 3a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 3z"/><path d="M8 0a4 4 0 0 0-4 4v8a4 4 0 0 0 4 4h.083a4 4 0 0 0 4-4V4a4 4 0 0 0-4-4H8zm3.5 4a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/></svg>
                     <span>Drag to rotate</span>
                 </div>
-                <h2 class="text-lg font-semibold mt-4">Select a Color</h2>
+                <h2 class="text-lg font-semibold">Select a Color</h2>
                 <div id="color-palette" class="flex justify-center gap-3 p-2 bg-gray-100 rounded-lg"></div>
             </div>
 
@@ -126,7 +126,7 @@
                 <div class="scene" id="scene-preview">
                     <div class="cube" id="cube-preview"></div>
                 </div>
-                 <div class="flex items-center justify-center gap-2 text-sm text-gray-500">
+                 <div class="flex items-center justify-center gap-2 text-sm text-gray-500 mt-8 mb-4">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-mouse" viewBox="0 0 16 16"><path d="M8 3a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 3z"/><path d="M8 0a4 4 0 0 0-4 4v8a4 4 0 0 0 4 4h.083a4 4 0 0 0 4-4V4a4 4 0 0 0-4-4H8zm3.5 4a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/></svg>
                     <span>Drag to rotate</span>
                 </div>
@@ -153,9 +153,9 @@
             </ul>
         </div>
     </div>
-
+    
     <script>
-    document.addEventListener('DOMContentLoaded', () => {
+    window.onload = function() {
         const mainCubeElement = document.getElementById('cube-main');
         const previewCubeElement = document.getElementById('cube-preview');
         const paletteElement = document.getElementById('color-palette');
@@ -321,7 +321,7 @@
         // --- Solver Integration ---
         function initializeSolver() {
             if (typeof Cube === 'undefined') {
-                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Solver library not found.</span><br>Please check your internet connection and refresh.`;
+                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Solver library not found.</span><br>Please refresh the page.`;
                 return;
             }
 
@@ -329,10 +329,8 @@
             solveBtn.textContent = "Initializing...";
             solutionDisplay.innerHTML = '<div class="text-center text-gray-500">Solver is initializing, please wait...</div>';
 
-            // Use setTimeout to allow the UI to update before the heavy work starts.
             setTimeout(() => {
                 try {
-                    // This is the computationally intensive part.
                     Cube.initSolver();
                     isSolverInitialized = true;
                     solveBtn.disabled = false;
@@ -353,7 +351,6 @@
             let faceletString = '';
             for (const faceName of URFDLB_order) {
                 for (const color of state[faceName]) {
-                    // Default to the face's own color if a sticker is unassigned
                     const stickerColor = color || getSolvedState()[faceName][4];
                     faceletString += colorMap[stickerColor];
                 }
@@ -368,7 +365,6 @@
             }
             solveBtn.disabled = true;
             solveBtn.textContent = "Solving...";
-            // Allow UI to update before potential freeze
             await new Promise(resolve => setTimeout(resolve, 50));
 
             const faceletString = convertStateToFaceletString(mainCubeState);
@@ -435,7 +431,8 @@
         setupCubeRotation('scene-main');
         setupCubeRotation('scene-preview');
         initializeSolver();
-    });
+    };
     </script>
 </body>
 </html>
+ 
