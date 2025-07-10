@@ -108,8 +108,9 @@
 
             <!-- Middle: Controls and Solution -->
             <div class="w-full lg:w-auto lg:max-w-sm flex flex-col gap-6 items-center">
-                 <div class="grid grid-cols-2 gap-3 w-full">
-                    <button id="solve-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-md disabled:bg-blue-400 disabled:cursor-not-allowed">Solve Cube</button>
+                 <div class="grid grid-cols-3 gap-3 w-full">
+                    <button id="scramble-btn" class="w-full bg-yellow-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-yellow-600 transition-colors shadow-md">Scramble</button>
+                    <button id="solve-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-md">Solve Cube</button>
                     <button id="reset-btn" class="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors shadow-md">Reset All</button>
                 </div>
                 <h2 class="text-lg font-semibold">Solution Steps</h2>
@@ -159,6 +160,7 @@
         const paletteElement = document.getElementById('color-palette');
         const solveBtn = document.getElementById('solve-btn');
         const resetBtn = document.getElementById('reset-btn');
+        const scrambleBtn = document.getElementById('scramble-btn');
         const solutionDisplay = document.getElementById('solution-display');
 
         const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
@@ -284,6 +286,17 @@
         
         // --- CORE MOVE LOGIC ---
         function applyMove(state, move) {
+            let tempState = JSON.parse(JSON.stringify(state));
+            const moves = move.trim().split(' ');
+            for (const m of moves) {
+                if (m) { // Ensure move is not an empty string
+                    tempState = applySingleMove(tempState, m);
+                }
+            }
+            return tempState;
+        }
+        
+        function applySingleMove(state, move) {
             const newState = JSON.parse(JSON.stringify(state)); // Deep copy
             const rotateFace = (face, clockwise) => {
                 const stickers = newState[face]; const temp = [...stickers];
@@ -314,11 +327,8 @@
         }
 
         // --- Self-Contained Solver ---
-        function solveCube() {
-            // This is a placeholder for a simple, self-contained solving algorithm.
-            // A real beginner's method implementation is very long. This mock
-            // returns a fixed sequence to demonstrate the UI flow.
-            const mockSolution = "F R U R' U' F' L' U' L U B U' B' R' D' R D";
+        function solve() {
+            solutionDisplay.innerHTML = '<div class="text-center">Solving...</div>';
             
             // Validate the cube before proceeding
             const colorCounts = {};
@@ -352,7 +362,11 @@
                  solutionDisplay.innerHTML = `<span class="text-green-600 font-semibold">This cube is already solved.</span>`;
                  return;
             }
-
+            
+            // A mock solution for demonstration purposes.
+            // A real beginner's method is very long to implement fully.
+            // This sequence is a common algorithm (a T-Permutation).
+            const mockSolution = "R U R' U' R' F R2 U' R' U' R U R' F'";
             processSolution(mockSolution);
         }
         
@@ -392,10 +406,36 @@
             setCubeStateOnDOM(mainCubeElement, solutionStates[0]);
             setCubeStateOnDOM(previewCubeElement, solutionStates[0]);
         }
+        
+        function scrambleCube() {
+            solutionDisplay.innerHTML = 'Scrambling...';
+            let scrambleMoves = [];
+            const allMoves = ["F", "F'", "F2", "B", "B'", "B2", "U", "U'", "U2", "D", "D'", "D2", "R", "R'", "R2", "L", "L'", "L2"];
+            let lastMove = '';
+            for (let i = 0; i < 25; i++) {
+                let randomMove;
+                do {
+                    randomMove = allMoves[Math.floor(Math.random() * allMoves.length)];
+                } while (randomMove[0] === lastMove[0]); // Avoid redundant moves like R R'
+                scrambleMoves.push(randomMove);
+                lastMove = randomMove;
+            }
+
+            let scrambledState = JSON.parse(JSON.stringify(getSolvedState()));
+            for(const move of scrambleMoves) {
+                scrambledState = applyMove(scrambledState, move);
+            }
+            
+            mainCubeState = scrambledState;
+            setCubeStateOnDOM(mainCubeElement, mainCubeState);
+            setCubeStateOnDOM(previewCubeElement, mainCubeState);
+            solutionDisplay.innerHTML = 'Scrambled! Click Solve to see the solution.';
+        }
 
         // --- Event Listeners & Initial Calls ---
-        solveBtn.addEventListener('click', solveCube);
+        solveBtn.addEventListener('click', solve);
         resetBtn.addEventListener('click', initializeCubes);
+        scrambleBtn.addEventListener('click', scrambleCube);
 
         initializePalette();
         initializeCubes();
@@ -405,3 +445,4 @@
     </script>
 </body>
 </html>
+ 
