@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rubik's Cube Solver</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- NOTE: The Kociemba solver library is now loaded inside the Web Worker -->
     <style>
         /* Using Inter font from Google Fonts */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
@@ -109,7 +110,7 @@
             <!-- Middle: Controls and Solution -->
             <div class="w-full lg:w-auto lg:max-w-sm flex flex-col gap-6 items-center">
                  <div class="grid grid-cols-2 gap-3 w-full">
-                    <button id="solve-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-md">Solve Cube</button>
+                    <button id="solve-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-md disabled:bg-blue-400 disabled:cursor-not-allowed">Solve Cube</button>
                     <button id="reset-btn" class="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors shadow-md">Reset All</button>
                 </div>
                 <h2 class="text-lg font-semibold">Solution Steps</h2>
@@ -170,6 +171,8 @@
         let selectedColor = 'white';
         let mainCubeState = {};
         let solutionStates = [];
+        let isSolverInitialized = false;
+        let solverWorker;
 
         // --- Cube Creation and Initialization ---
         function createCubeDOM(parentElement, isInteractive) {
@@ -224,7 +227,9 @@
             solutionStates = [];
             setCubeStateOnDOM(mainCubeElement, mainCubeState);
             setCubeStateOnDOM(previewCubeElement, mainCubeState);
-            solutionDisplay.innerHTML = "Click 'Solve' to begin...";
+            if(isSolverInitialized) {
+                solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
+            }
         }
 
         function updateMainCubeStateFromDOM() {
@@ -285,96 +290,139 @@
         // --- CORE MOVE LOGIC ---
         function applyMove(state, move) {
             const newState = JSON.parse(JSON.stringify(state)); // Deep copy
-
             const rotateFace = (face, clockwise) => {
-                const stickers = newState[face];
-                const temp = [...stickers];
-                if (clockwise) {
-                    newState[face] = [temp[6], temp[3], temp[0], temp[7], temp[4], temp[1], temp[8], temp[5], temp[2]];
-                } else { // Counter-clockwise
-                    newState[face] = [temp[2], temp[5], temp[8], temp[1], temp[4], temp[7], temp[0], temp[3], temp[6]];
-                }
+                const stickers = newState[face]; const temp = [...stickers];
+                if (clockwise) { newState[face] = [temp[6], temp[3], temp[0], temp[7], temp[4], temp[1], temp[8], temp[5], temp[2]]; } 
+                else { newState[face] = [temp[2], temp[5], temp[8], temp[1], temp[4], temp[7], temp[0], temp[3], temp[6]]; }
             };
-
-            const moveStickers = (face1, indices1, face2, indices2) => {
-                const temp = indices1.map(i => newState[face1][i]);
-                indices2.forEach((j, i) => {
-                    newState[face1][indices1[i]] = newState[face2][j];
-                });
-                indices1.forEach((j, i) => {
-                    newState[face2][indices2[i]] = temp[i];
-                });
-            };
-
-            const F = () => {
-                rotateFace('front', true);
-                const temp = [newState.top[6], newState.top[7], newState.top[8]];
-                // top -> right
-                newState.top[6] = newState.left[8]; newState.top[7] = newState.left[5]; newState.top[8] = newState.left[2];
-                // left -> bottom
-                newState.left[8] = newState.bottom[2]; newState.left[5] = newState.bottom[1]; newState.left[2] = newState.bottom[0];
-                // bottom -> right
-                newState.bottom[2] = newState.right[0]; newState.bottom[1] = newState.right[3]; newState.bottom[0] = newState.right[6];
-                // right -> top (from temp)
-                newState.right[0] = temp[0]; newState.right[3] = temp[1]; newState.right[6] = temp[2];
-            };
-            const F_prime = () => { F(); F(); F(); }; // 3 clockwise turns = 1 counter-clockwise
-            const U = () => {
-                rotateFace('top', true);
-                const temp = [...newState.front.slice(0, 3)];
-                newState.front.splice(0, 3, ...newState.right.slice(0, 3));
-                newState.right.splice(0, 3, ...newState.back.slice(0, 3));
-                newState.back.splice(0, 3, ...newState.left.slice(0, 3));
-                newState.left.splice(0, 3, ...temp);
-            };
+            const F = () => { rotateFace('front', true); const temp = [newState.top[6], newState.top[7], newState.top[8]]; newState.top[6] = newState.left[8]; newState.top[7] = newState.left[5]; newState.top[8] = newState.left[2]; newState.left[8] = newState.bottom[2]; newState.left[5] = newState.bottom[1]; newState.left[2] = newState.bottom[0]; newState.bottom[2] = newState.right[0]; newState.bottom[1] = newState.right[3]; newState.bottom[0] = newState.right[6]; newState.right[0] = temp[0]; newState.right[3] = temp[1]; newState.right[6] = temp[2]; };
+            const F_prime = () => { F(); F(); F(); };
+            const U = () => { rotateFace('top', true); const temp = [...newState.front.slice(0, 3)]; newState.front.splice(0, 3, ...newState.right.slice(0, 3)); newState.right.splice(0, 3, ...newState.back.slice(0, 3)); newState.back.splice(0, 3, ...newState.left.slice(0, 3)); newState.left.splice(0, 3, ...temp); };
             const U_prime = () => { U(); U(); U(); };
-            const R = () => {
-                rotateFace('right', true);
-                const temp = [newState.top[2], newState.top[5], newState.top[8]];
-                newState.top[2] = newState.front[2]; newState.top[5] = newState.front[5]; newState.top[8] = newState.front[8];
-                newState.front[2] = newState.bottom[2]; newState.front[5] = newState.bottom[5]; newState.front[8] = newState.bottom[8];
-                newState.bottom[2] = newState.back[6]; newState.bottom[5] = newState.back[3]; newState.bottom[8] = newState.back[0];
-                newState.back[6] = temp[0]; newState.back[3] = temp[1]; newState.back[0] = temp[2];
-            };
+            const R = () => { rotateFace('right', true); const temp = [newState.top[2], newState.top[5], newState.top[8]]; newState.top[2] = newState.front[2]; newState.top[5] = newState.front[5]; newState.top[8] = newState.front[8]; newState.front[2] = newState.bottom[2]; newState.front[5] = newState.bottom[5]; newState.front[8] = newState.bottom[8]; newState.bottom[2] = newState.back[6]; newState.bottom[5] = newState.back[3]; newState.bottom[8] = newState.back[0]; newState.back[6] = temp[0]; newState.back[3] = temp[1]; newState.back[0] = temp[2]; };
             const R_prime = () => { R(); R(); R(); };
-            // L, B, D moves are defined similarly...
             const L = () => { rotateFace('left', true); const temp = [newState.top[0], newState.top[3], newState.top[6]]; newState.top[0] = newState.back[8]; newState.top[3] = newState.back[5]; newState.top[6] = newState.back[2]; newState.back[8] = newState.bottom[0]; newState.back[5] = newState.bottom[3]; newState.back[2] = newState.bottom[6]; newState.bottom[0] = newState.front[0]; newState.bottom[3] = newState.front[3]; newState.bottom[6] = newState.front[6]; newState.front[0] = temp[0]; newState.front[3] = temp[1]; newState.front[6] = temp[2]; };
             const L_prime = () => { L(); L(); L(); };
             const B = () => { rotateFace('back', true); const temp = [newState.top[2], newState.top[1], newState.top[0]]; newState.top[2] = newState.right[8]; newState.top[1] = newState.right[5]; newState.top[0] = newState.right[2]; newState.right[8] = newState.bottom[6]; newState.right[5] = newState.bottom[7]; newState.right[2] = newState.bottom[8]; newState.bottom[6] = newState.left[0]; newState.bottom[7] = newState.left[3]; newState.bottom[8] = newState.left[6]; newState.left[0] = temp[0]; newState.left[3] = temp[1]; newState.left[6] = temp[2]; };
             const B_prime = () => { B(); B(); B(); };
             const D = () => { rotateFace('bottom', true); const temp = [...newState.front.slice(6, 9)]; newState.front.splice(6, 3, ...newState.left.slice(6, 9)); newState.left.splice(6, 3, ...newState.back.slice(6, 9)); newState.back.splice(6, 3, ...newState.right.slice(6, 9)); newState.right.splice(6, 3, ...temp); };
             const D_prime = () => { D(); D(); D(); };
-
             switch (move) {
-                case "F": F(); break;
-                case "F'": F_prime(); break;
-                case "F2": F(); F(); break;
-                case "U": U(); break;
-                case "U'": U_prime(); break;
-                case "U2": U(); U(); break;
-                case "R": R(); break;
-                case "R'": R_prime(); break;
-                case "R2": R(); R(); break;
-                case "L": L(); break;
-                case "L'": L_prime(); break;
-                case "L2": L(); L(); break;
-                case "B": B(); break;
-                case "B'": B_prime(); break;
-                case "B2": B(); B(); break;
-                case "D": D(); break;
-                case "D'": D_prime(); break;
-                case "D2": D(); D(); break;
+                case "F": F(); break; case "F'": F_prime(); break; case "F2": F(); F(); break;
+                case "U": U(); break; case "U'": U_prime(); break; case "U2": U(); U(); break;
+                case "R": R(); break; case "R'": R_prime(); break; case "R2": R(); R(); break;
+                case "L": L(); break; case "L'": L_prime(); break; case "L2": L(); L(); break;
+                case "B": B(); break; case "B'": B_prime(); break; case "B2": B(); B(); break;
+                case "D": D(); break; case "D'": D_prime(); break; case "D2": D(); D(); break;
             }
             return newState;
         }
 
-        // --- Solver Logic ---
+        // --- Solver Integration with Web Worker ---
+        const workerScript = `
+          // Load the solver library within the worker's scope
+          importScripts('https://cdn.jsdelivr.net/npm/cubejs/dist/cube.min.js');
+
+          self.onmessage = function(e) {
+            const { command, faceletString } = e.data;
+
+            if (command === 'init') {
+              try {
+                Cube.initSolver();
+                self.postMessage({ status: 'ready' });
+              } catch (error) {
+                self.postMessage({ status: 'error', message: 'Initialization failed' });
+              }
+            }
+
+            if (command === 'solve') {
+              try {
+                const cube = Cube.fromString(faceletString);
+                const solution = cube.solve();
+                self.postMessage({ status: 'solved', solution: solution });
+              } catch (error) {
+                self.postMessage({ status: 'error', message: 'Solving failed' });
+              }
+            }
+          };
+        `;
+
+        function initializeSolver() {
+            solveBtn.disabled = true;
+            solveBtn.textContent = "Initializing...";
+            solutionDisplay.innerHTML = '<div class="text-center text-gray-500">Solver is initializing, please wait...</div>';
+
+            try {
+                const blob = new Blob([workerScript], { type: 'application/javascript' });
+                const workerUrl = URL.createObjectURL(blob);
+                solverWorker = new Worker(workerUrl);
+
+                solverWorker.onmessage = function(e) {
+                    const { status, solution, message } = e.data;
+                    if (status === 'ready') {
+                        isSolverInitialized = true;
+                        solveBtn.disabled = false;
+                        solveBtn.textContent = "Solve Cube";
+                        solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
+                        URL.revokeObjectURL(workerUrl);
+                    } else if (status === 'solved') {
+                        processSolution(solution);
+                    } else if (status === 'error') {
+                        solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">${message}.</span><br>Please try refreshing the page.`;
+                        solveBtn.textContent = "Solve Cube";
+                        solveBtn.disabled = false;
+                    }
+                };
+                
+                solverWorker.onerror = function(e) {
+                    solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Failed to create solver worker.</span><br>Your browser might not support this feature.`;
+                    console.error('Worker Error:', e);
+                    solveBtn.textContent = "Solve Cube";
+                    solveBtn.disabled = false;
+                };
+
+                solverWorker.postMessage({ command: 'init' });
+
+            } catch (e) {
+                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Failed to create solver worker.</span><br>Your browser might not support this feature.`;
+                console.error('Worker Creation Error:', e);
+            }
+        }
+        
+        function convertStateToFaceletString(state) {
+            const colorMap = { white: 'U', red: 'R', green: 'F', yellow: 'D', orange: 'L', blue: 'B' };
+            const URFDLB_order = ['top', 'right', 'front', 'bottom', 'left', 'back'];
+            let faceletString = '';
+            for (const faceName of URFDLB_order) {
+                for (const color of state[faceName]) {
+                    faceletString += colorMap[color] || 'U';
+                }
+            }
+            return faceletString;
+        }
+
         function solveCube() {
-            // (Validation logic is omitted for brevity but would be here)
+            if (!isSolverInitialized) {
+                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Solver not ready.</span><br>Please wait for initialization or refresh the page.`;
+                return;
+            }
+            solveBtn.disabled = true;
+            solveBtn.textContent = "Solving...";
             solutionDisplay.innerHTML = '<div class="text-center">Solving...</div>';
-            
-            const mockSolution = "F R U R' U' F' L' U' L U B U' B'";
-            const moves = mockSolution.split(' ');
+
+            const faceletString = convertStateToFaceletString(mainCubeState);
+            solverWorker.postMessage({ command: 'solve', faceletString: faceletString });
+        }
+        
+        function processSolution(solution) {
+            if (!solution) {
+                solutionDisplay.innerHTML = `<span class="text-green-600 font-semibold">This cube is already solved.</span>`;
+                solveBtn.textContent = "Solve Cube";
+                solveBtn.disabled = false;
+                return;
+            }
+
+            const moves = solution.trim().split(' ');
             
             solutionStates = [JSON.parse(JSON.stringify(mainCubeState))];
             let currentState = JSON.parse(JSON.stringify(mainCubeState));
@@ -384,10 +432,12 @@
                 solutionStates.push(JSON.parse(JSON.stringify(currentState)));
             }
 
-            displaySolution(moves);
+            displaySolutionUI(moves);
+            solveBtn.textContent = "Solve Cube";
+            solveBtn.disabled = false;
         }
 
-        function displaySolution(moves) {
+        function displaySolutionUI(moves) {
             solutionDisplay.innerHTML = '';
             moves.forEach((move, index) => {
                 const moveSpan = document.createElement('span');
@@ -401,7 +451,6 @@
                 });
                 solutionDisplay.appendChild(moveSpan);
             });
-            // Show the initial state on the cubes before any move is clicked
             setCubeStateOnDOM(mainCubeElement, solutionStates[0]);
             setCubeStateOnDOM(previewCubeElement, solutionStates[0]);
         }
@@ -414,6 +463,7 @@
         initializeCubes();
         setupCubeRotation('scene-main');
         setupCubeRotation('scene-preview');
+        initializeSolver();
     });
     </script>
 </body>
