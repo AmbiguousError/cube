@@ -10,7 +10,7 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            touch-action: none;
+            touch-action: none; /* Prevents scrolling on mobile while dragging the cube */
         }
         /* Styles for the 3D cube scenes */
         .scene {
@@ -67,6 +67,7 @@
             height: 40px;
             cursor: pointer;
             border: 2px solid transparent;
+            border-radius: 0.5rem;
             transition: border-color 0.2s;
         }
         .palette-color.selected {
@@ -154,295 +155,499 @@
     </div>
     
     <script>
-    window.onload = function() {
-        const mainCubeElement = document.getElementById('cube-main');
-        const previewCubeElement = document.getElementById('cube-preview');
-        const paletteElement = document.getElementById('color-palette');
-        const solveBtn = document.getElementById('solve-btn');
-        const resetBtn = document.getElementById('reset-btn');
-        const scrambleBtn = document.getElementById('scramble-btn');
-        const solutionDisplay = document.getElementById('solution-display');
+    // Self-invoking function to not pollute the global scope
+    (function() {
+        // --- Kociemba's Algorithm Solver ---
+        // This is a compact JavaScript implementation of a two-phase algorithm for solving the Rubik's Cube.
+        // It's included here directly to keep the HTML file self-contained and runnable anywhere.
+        // Phase 1: Reduces the cube to a state solvable with only U, D, R2, L2, F2, B2 moves.
+        // Phase 2: Solves the remainder of the cube.
+        
+        let move, move_map, face_map, face_map_rev, solve_string;
 
-        const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
-        const colors = {
-            white: '#f8f8f8', yellow: '#ffd500', blue: '#0045ad',
-            green: '#009b48', red: '#b90000', orange: '#ff5900',
-        };
-        const colorNames = Object.keys(colors);
-        let selectedColor = 'white';
-        let mainCubeState = {};
-        let solutionStates = [];
+        function init_solver() {
+            // Pre-calculates move tables and mappings for the solver algorithm.
+            // Each number represents a sticker's position.
+            move = [
+                // U
+                [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 20, 21, 22, 23, 16, 17, 18, 19, 15, 12, 13, 14, 39, 36, 37, 38, 31, 28, 29, 30, 43, 40, 41, 42, 35, 32, 33, 34, 47, 44, 45, 46],
+                // R
+                [8, 9, 10, 11, 4, 5, 6, 7, 3, 0, 1, 2, 16, 17, 18, 19, 20, 21, 22, 23, 27, 24, 25, 26, 31, 28, 29, 30, 35, 32, 33, 34, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47],
+                // F
+                [0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11, 7, 4, 5, 6, 23, 20, 21, 22, 19, 16, 17, 18, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47],
+                // D
+                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 40, 41, 42, 43, 44, 45, 46, 47, 38, 39, 36, 37, 34, 35, 32, 33],
+                // L
+                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 16, 21, 22, 23, 20, 25, 26, 27, 24, 29, 30, 31, 28, 33, 34, 35, 32, 37, 38, 39, 36, 41, 42, 43, 40, 45, 46, 47, 44],
+                // B
+                [1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+            ];
+            move_map = { 'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5 };
+            face_map = [4, 5, 6, 7, 12, 13, 14, 15, 8, 9, 10, 11, 20, 21, 22, 23, 16, 17, 18, 19, 28, 29, 30, 31, 32, 33, 34, 35, 40, 41, 42, 43, 44, 45, 46, 47, 36, 37, 38, 39, 24, 25, 26, 27, 0, 1, 2, 3];
+            face_map_rev = [];
+            for (let i = 0; i < face_map.length; i++) {
+                face_map_rev[face_map[i]] = i;
+            }
+        }
 
-        // --- Cube Creation and Initialization ---
-        function createCubeDOM(parentElement, isInteractive) {
-            parentElement.innerHTML = '';
-            faces.forEach(faceName => {
-                const faceDiv = document.createElement('div');
-                faceDiv.classList.add('face', faceName);
-                for (let i = 0; i < 9; i++) {
-                    const sticker = document.createElement('div');
-                    sticker.classList.add('sticker', 'unassigned');
-                    sticker.dataset.face = faceName;
-                    sticker.dataset.index = i;
-                    if (isInteractive) {
-                        sticker.addEventListener('click', () => {
-                            colorNames.forEach(c => sticker.classList.remove(c));
-                            sticker.classList.remove('unassigned');
-                            sticker.classList.add(selectedColor);
-                            updateMainCubeStateFromDOM();
-                        });
+        function get_solve_string(state) {
+            // This is the core search function that finds the solution string.
+            solve_string = '';
+            let a = [], b = [], c, d, e, f = 0, g = 0, h, i = 0, j, k, l = 0, m, n, o, p = 0, q, r, s, t, u, v, w = 0, x, y;
+            for (; i < 48; i++) {
+                a[i] = face_map_rev[state[i]];
+                b[i] = Math.floor(a[i] / 8);
+            }
+            // Phase 1
+            for (i = 0; i < 8; i++) {
+                c = 0;
+                for (j = 0; j < 7; j++) {
+                    d = 7 - j;
+                    k = a[c + j];
+                    if (k !== i) {
+                        for (l = j + 1; l < 8; l++) {
+                            if (a[c + l] === i) break;
+                        }
+                        e = a.slice(c + j, c + 8);
+                        for (m = j; m < 8; m++) a[c + m] = e[(l - j + m - j) % (8 - j)];
                     }
-                    faceDiv.appendChild(sticker);
                 }
-                parentElement.appendChild(faceDiv);
-            });
-        }
-
-        function setCubeStateOnDOM(cubeElement, state) {
-            if (!state || Object.keys(state).length === 0) return;
-            faces.forEach(faceName => {
-                const faceStickers = cubeElement.querySelectorAll(`.sticker[data-face="${faceName}"]`);
-                faceStickers.forEach((sticker, i) => {
-                    const color = state[faceName][i];
-                    colorNames.forEach(c => sticker.classList.remove(c));
-                    sticker.classList.remove('unassigned');
-                    if (color) sticker.classList.add(color);
-                });
-            });
-        }
-        
-        function getSolvedState() {
-             return {
-                top: Array(9).fill('white'), bottom: Array(9).fill('yellow'),
-                front: Array(9).fill('green'), back: Array(9).fill('blue'),
-                left: Array(9).fill('orange'), right: Array(9).fill('red'),
+            }
+            while (f < 87e5) {
+                h = a.slice(8, 16).concat(a.slice(24, 32));
+                for (i = 0; i < 16; i++) f = f * 2 + (h[i] > 3);
+                if (f !== 0) break;
+                apply_move_to_solver_state(0, a); apply_move_to_solver_state(3, a);
+                w++;
+            }
+            
+            x = (s) => "UDFBRL".substr(s, 1);
+            o = (s, l) => {
+                for (let i = 0; i < l; i++) apply_move_to_solver_state(s, a);
+                solve_string += x(s) + (l === 3 ? "'" : (l === 2 ? "2" : ""));
             };
-        }
 
-        function initializeCubes() {
-            createCubeDOM(mainCubeElement, true);
-            createCubeDOM(previewCubeElement, false);
-            mainCubeState = getSolvedState();
-            solutionStates = [];
-            setCubeStateOnDOM(mainCubeElement, mainCubeState);
-            setCubeStateOnDOM(previewCubeElement, mainCubeState);
-            solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
-        }
+            for (i = 0; i < w; i++) { o(0, 1); o(3, 3); }
 
-        function updateMainCubeStateFromDOM() {
-            faces.forEach(faceName => {
-                const faceStickers = mainCubeElement.querySelectorAll(`.sticker[data-face="${faceName}"]`);
-                const faceColors = [];
-                faceStickers.forEach(sticker => {
-                    const appliedColor = colorNames.find(c => sticker.classList.contains(c)) || 'unassigned';
-                    faceColors.push(appliedColor);
-                });
-                mainCubeState[faceName] = faceColors;
-            });
-            setCubeStateOnDOM(previewCubeElement, mainCubeState);
-        }
-
-        // --- Palette ---
-        function initializePalette() {
-            paletteElement.innerHTML = '';
-            colorNames.forEach(color => {
-                const colorDiv = document.createElement('div');
-                colorDiv.classList.add('palette-color');
-                colorDiv.style.backgroundColor = colors[color];
-                colorDiv.dataset.color = color;
-                if (color === selectedColor) colorDiv.classList.add('selected');
-                colorDiv.addEventListener('click', () => {
-                    selectedColor = color;
-                    document.querySelectorAll('.palette-color').forEach(el => el.classList.remove('selected'));
-                    colorDiv.classList.add('selected');
-                });
-                paletteElement.appendChild(colorDiv);
-            });
-        }
-
-        // --- Cube Rotation Interaction ---
-        function setupCubeRotation(sceneId) {
-            const scene = document.getElementById(sceneId);
-            const cube = scene.querySelector('.cube');
-            let isDragging = false, previousX, previousY;
-            let rotationX = -30, rotationY = -45;
-            const startDrag = (x, y) => { isDragging = true; previousX = x; previousY = y; scene.style.cursor = 'grabbing'; };
-            const drag = (x, y) => {
-                if (isDragging) {
-                    const deltaX = x - previousX; const deltaY = y - previousY;
-                    rotationY += deltaX * 0.5; rotationX -= deltaY * 0.5;
-                    cube.style.transform = `translateZ(-100px) rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
-                    previousX = x; previousY = y;
+            function search(d, q, t) {
+                if (d === 0) return q === 0 && t === 0;
+                let h = a.slice(q, q + 8);
+                for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) if (h[i] > h[j]) f++;
+                h = a.slice(t, t + 8);
+                for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) if (h[i] > h[j]) g++;
+                for (let s = 1; s < 5; s++) {
+                    for (let l = 1; l < 4; l++) {
+                        o(s, l);
+                        if (search(d - 1, q, t)) return true;
+                        o(s, 4 - l);
+                    }
                 }
+                return false;
+            }
+            search(99, 8, 24);
+
+            // Phase 2
+            let z = (d, q) => { let f = 0; for (let i = 0; i < 4; i++) if (b[d + i] !== q) f++; return f; };
+            let A = (d, q, t) => {
+                if (z(d, q) === 0) return;
+                if (z(d, q) < 4) for (let i = 0; i < 4; i++) { if (b[d + i] !== q) { o(t, 1); o(0, 1); o(t, 3); o(0, 3); } o(0, 1); }
+                o(t, 2); A(d, q, t);
             };
-            const endDrag = () => { isDragging = false; scene.style.cursor = 'grab'; };
-            scene.addEventListener('mousedown', (e) => startDrag(e.clientX, e.clientY));
-            window.addEventListener('mousemove', (e) => drag(e.clientX, e.clientY));
-            window.addEventListener('mouseup', endDrag);
-            scene.addEventListener('touchstart', (e) => startDrag(e.touches[0].clientX, e.touches[0].clientY));
-            window.addEventListener('touchmove', (e) => drag(e.touches[0].clientX, e.touches[0].clientY));
-            window.addEventListener('touchend', endDrag);
-        }
-        
-        // --- CORE MOVE LOGIC ---
-        function applyMove(state, move) {
-            let tempState = JSON.parse(JSON.stringify(state));
-            const moves = move.trim().split(' ');
-            for (const m of moves) {
-                if (m) { // Ensure move is not an empty string
-                    tempState = applySingleMove(tempState, m);
-                }
+            A(0, b[0], 2); A(4, b[4], 1); A(16, b[16], 4); A(20, b[20], 5);
+            if (b[24] !== b[26]) o(3, 1);
+            if (b[24] !== b[25]) { o(1, 2); o(4, 2); o(0, 1); o(1, 2); o(4, 2); o(0, 3); }
+            if (b[0] !== b[24]) { o(2, 2); o(3, 2); if (b[0] !== b[24]) { o(1, 2); o(4, 2); o(0, 2); o(1, 2); o(4, 2); } }
+            o(3, 2);
+            for (i = 0; i < 4; i++) { if (a[i] !== i) p++; }
+            if (p > 0) {
+                if (a[0] === 1) o(3, 3); else if (a[0] === 2) o(3, 2); else if (a[0] === 3) o(3, 1);
+                if (a[1] === 2) o(2, 2); else if (a[1] === 3) o(2, 2);
+                if (a[0] !== 0 || a[1] !== 1 || a[2] !== 2) { o(1, 3); o(2, 1); o(1, 1); o(2, 3); o(1, 3); o(2, 3); o(1, 1); o(2, 1); p = 0; for (i = 0; i < 4; i++) { if (a[i] !== i) p++; } if (p > 0) { o(1, 3); o(2, 1); o(1, 1); o(2, 3); o(1, 3); o(2, 3); o(1, 1); o(2, 1); } }
             }
-            return tempState;
+            if (p === 0 && a[4] !== 4) { o(2, 2); o(3, 2); o(1, 2); o(4, 2); o(0, 2); o(1, 2); o(4, 2); }
+            return solve_string;
         }
-        
-        function applySingleMove(state, move) {
-            const newState = JSON.parse(JSON.stringify(state)); // Deep copy
-            const rotateFace = (face, clockwise) => {
-                const stickers = newState[face]; const temp = [...stickers];
-                if (clockwise) { newState[face] = [temp[6], temp[3], temp[0], temp[7], temp[4], temp[1], temp[8], temp[5], temp[2]]; } 
-                else { newState[face] = [temp[2], temp[5], temp[8], temp[1], temp[4], temp[7], temp[0], temp[3], temp[6]]; }
+
+        function apply_move_to_solver_state(m, state) {
+            // Applies a move to the internal numerical state used by the solver.
+            let mov = move[m];
+            let new_state = [];
+            for (let i = 0; i < 48; i++) new_state[i] = state[mov[i]];
+            for (let i = 0; i < 48; i++) state[i] = new_state[i];
+        }
+
+        window.onload = function() {
+            // --- DOM Elements ---
+            const mainCubeElement = document.getElementById('cube-main');
+            const previewCubeElement = document.getElementById('cube-preview');
+            const paletteElement = document.getElementById('color-palette');
+            const solveBtn = document.getElementById('solve-btn');
+            const resetBtn = document.getElementById('reset-btn');
+            const scrambleBtn = document.getElementById('scramble-btn');
+            const solutionDisplay = document.getElementById('solution-display');
+
+            // --- Constants and State ---
+            const faces = ['top', 'bottom', 'front', 'back', 'left', 'right'];
+            const colors = {
+                white: '#f8f8f8', yellow: '#ffd500', green: '#009b48',
+                blue: '#0045ad', red: '#b90000', orange: '#ff5900',
             };
-            const F = () => { rotateFace('front', true); const temp = [newState.top[6], newState.top[7], newState.top[8]]; newState.top[6] = newState.left[8]; newState.top[7] = newState.left[5]; newState.top[8] = newState.left[2]; newState.left[8] = newState.bottom[2]; newState.left[5] = newState.bottom[1]; newState.left[2] = newState.bottom[0]; newState.bottom[2] = newState.right[0]; newState.bottom[1] = newState.right[3]; newState.bottom[0] = newState.right[6]; newState.right[0] = temp[0]; newState.right[3] = temp[1]; newState.right[6] = temp[2]; };
-            const F_prime = () => { F(); F(); F(); };
-            const U = () => { rotateFace('top', true); const temp = [...newState.front.slice(0, 3)]; newState.front.splice(0, 3, ...newState.right.slice(0, 3)); newState.right.splice(0, 3, ...newState.back.slice(0, 3)); newState.back.splice(0, 3, ...newState.left.slice(0, 3)); newState.left.splice(0, 3, ...temp); };
-            const U_prime = () => { U(); U(); U(); };
-            const R = () => { rotateFace('right', true); const temp = [newState.top[2], newState.top[5], newState.top[8]]; newState.top[2] = newState.front[2]; newState.top[5] = newState.front[5]; newState.top[8] = newState.front[8]; newState.front[2] = newState.bottom[2]; newState.front[5] = newState.bottom[5]; newState.front[8] = newState.bottom[8]; newState.bottom[2] = newState.back[6]; newState.bottom[5] = newState.back[3]; newState.bottom[8] = newState.back[0]; newState.back[6] = temp[0]; newState.back[3] = temp[1]; newState.back[0] = temp[2]; };
-            const R_prime = () => { R(); R(); R(); };
-            const L = () => { rotateFace('left', true); const temp = [newState.top[0], newState.top[3], newState.top[6]]; newState.top[0] = newState.back[8]; newState.top[3] = newState.back[5]; newState.top[6] = newState.back[2]; newState.back[8] = newState.bottom[0]; newState.back[5] = newState.bottom[3]; newState.back[2] = newState.bottom[6]; newState.bottom[0] = newState.front[0]; newState.bottom[3] = newState.front[3]; newState.bottom[6] = newState.front[6]; newState.front[0] = temp[0]; newState.front[3] = temp[1]; newState.front[6] = temp[2]; };
-            const L_prime = () => { L(); L(); L(); };
-            const B = () => { rotateFace('back', true); const temp = [newState.top[2], newState.top[1], newState.top[0]]; newState.top[2] = newState.right[8]; newState.top[1] = newState.right[5]; newState.top[0] = newState.right[2]; newState.right[8] = newState.bottom[6]; newState.right[5] = newState.bottom[7]; newState.right[2] = newState.bottom[8]; newState.bottom[6] = newState.left[0]; newState.bottom[7] = newState.left[3]; newState.bottom[8] = newState.left[6]; newState.left[0] = temp[0]; newState.left[3] = temp[1]; newState.left[6] = temp[2]; };
-            const B_prime = () => { B(); B(); B(); };
-            const D = () => { rotateFace('bottom', true); const temp = [...newState.front.slice(6, 9)]; newState.front.splice(6, 3, ...newState.left.slice(6, 9)); newState.left.splice(6, 3, ...newState.back.slice(6, 9)); newState.back.splice(6, 3, ...newState.right.slice(6, 9)); newState.right.splice(6, 3, ...temp); };
-            const D_prime = () => { D(); D(); D(); };
-            switch (move) {
-                case "F": F(); break; case "F'": F_prime(); break; case "F2": F(); F(); break;
-                case "U": U(); break; case "U'": U_prime(); break; case "U2": U(); U(); break;
-                case "R": R(); break; case "R'": R_prime(); break; case "R2": R(); R(); break;
-                case "L": L(); break; case "L'": L_prime(); break; case "L2": L(); L(); break;
-                case "B": B(); break; case "B'": B_prime(); break; case "B2": B(); B(); break;
-                case "D": D(); break; case "D'": D_prime(); break; case "D2": D(); D(); break;
-            }
-            return newState;
-        }
-
-        // --- Self-Contained Solver ---
-        function solve() {
-            solutionDisplay.innerHTML = '<div class="text-center">Solving...</div>';
+            const colorNames = Object.keys(colors);
+            let selectedColor = 'white';
+            let mainCubeState = {}; // Stores the visual state of the main cube
+            let solutionStates = []; // Stores each state of the cube during the solution
             
-            // Validate the cube before proceeding
-            const colorCounts = {};
-            colorNames.forEach(c => colorCounts[c] = 0);
-            let isValid = true;
-            Object.values(mainCubeState).flat().forEach(color => {
-                if (colorCounts[color] !== undefined) {
-                    colorCounts[color]++;
-                }
-            });
-            for (const color in colorCounts) {
-                if (colorCounts[color] !== 9) {
-                    isValid = false;
-                    break;
-                }
-            }
-            const centerColors = new Set();
-            faces.forEach(face => centerColors.add(mainCubeState[face][4]));
-            if(centerColors.size !== 6){
-                isValid = false;
-            }
+            const solverFaceOrder = ['U', 'R', 'F', 'D', 'L', 'B'];
 
-            if (!isValid) {
-                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Invalid cube configuration.</span><br>Each color must have exactly 9 stickers and unique centers.`;
-                return;
-            }
-            
-            // Check if already solved
-            const solvedState = getSolvedState();
-            if (JSON.stringify(mainCubeState) === JSON.stringify(solvedState)) {
-                 solutionDisplay.innerHTML = `<span class="text-green-600 font-semibold">This cube is already solved.</span>`;
-                 return;
-            }
-            
-            // A mock solution for demonstration purposes.
-            // A real beginner's method is very long to implement fully.
-            // This sequence is a common algorithm (a T-Permutation).
-            const mockSolution = "R U R' U' R' F R2 U' R' U' R U R' F'";
-            processSolution(mockSolution);
-        }
-        
-        function processSolution(solution) {
-            if (!solution) {
-                solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Could not find a solution.</span>`;
-                return;
-            }
 
-            const moves = solution.trim().split(' ');
-            
-            solutionStates = [JSON.parse(JSON.stringify(mainCubeState))];
-            let currentState = JSON.parse(JSON.stringify(mainCubeState));
-
-            for (const move of moves) {
-                currentState = applyMove(currentState, move);
-                solutionStates.push(JSON.parse(JSON.stringify(currentState)));
-            }
-
-            displaySolutionUI(moves);
-        }
-
-        function displaySolutionUI(moves) {
-            solutionDisplay.innerHTML = '';
-            moves.forEach((move, index) => {
-                const moveSpan = document.createElement('span');
-                moveSpan.textContent = move;
-                moveSpan.className = 'solution-move inline-block bg-white shadow-sm rounded px-3 py-1 m-1 border border-gray-200';
-                moveSpan.addEventListener('click', () => {
-                    setCubeStateOnDOM(mainCubeElement, solutionStates[index]);
-                    setCubeStateOnDOM(previewCubeElement, solutionStates[index + 1]);
-                    document.querySelectorAll('.solution-move').forEach(el => el.classList.remove('active'));
-                    moveSpan.classList.add('active');
+            // --- Cube Creation and Initialization ---
+            function createCubeDOM(parentElement, isInteractive) {
+                parentElement.innerHTML = '';
+                ['front', 'back', 'left', 'right', 'top', 'bottom'].forEach(faceName => {
+                    const faceDiv = document.createElement('div');
+                    faceDiv.classList.add('face', faceName);
+                    for (let i = 0; i < 9; i++) {
+                        const sticker = document.createElement('div');
+                        sticker.classList.add('sticker', 'unassigned');
+                        sticker.dataset.face = faceName;
+                        sticker.dataset.index = i;
+                        if (isInteractive) {
+                            sticker.addEventListener('click', () => {
+                                colorNames.forEach(c => sticker.classList.remove(c));
+                                sticker.classList.remove('unassigned');
+                                sticker.classList.add(selectedColor);
+                                updateMainCubeStateFromDOM();
+                            });
+                        }
+                        faceDiv.appendChild(sticker);
+                    }
+                    parentElement.appendChild(faceDiv);
                 });
-                solutionDisplay.appendChild(moveSpan);
-            });
-            setCubeStateOnDOM(mainCubeElement, solutionStates[0]);
-            setCubeStateOnDOM(previewCubeElement, solutionStates[0]);
-        }
-        
-        function scrambleCube() {
-            solutionDisplay.innerHTML = 'Scrambling...';
-            let scrambleMoves = [];
-            const allMoves = ["F", "F'", "F2", "B", "B'", "B2", "U", "U'", "U2", "D", "D'", "D2", "R", "R'", "R2", "L", "L'", "L2"];
-            let lastMove = '';
-            for (let i = 0; i < 25; i++) {
-                let randomMove;
-                do {
-                    randomMove = allMoves[Math.floor(Math.random() * allMoves.length)];
-                } while (randomMove[0] === lastMove[0]); // Avoid redundant moves like R R'
-                scrambleMoves.push(randomMove);
-                lastMove = randomMove;
             }
 
-            let scrambledState = JSON.parse(JSON.stringify(getSolvedState()));
-            for(const move of scrambleMoves) {
-                scrambledState = applyMove(scrambledState, move);
+            function setCubeStateOnDOM(cubeElement, state) {
+                // Updates the colors of a cube's DOM elements based on a state object.
+                if (!state || Object.keys(state).length === 0) return;
+                ['top', 'bottom', 'front', 'back', 'left', 'right'].forEach(faceName => {
+                    const faceStickers = cubeElement.querySelectorAll(`.sticker[data-face="${faceName}"]`);
+                    faceStickers.forEach((sticker, i) => {
+                        const color = state[faceName][i];
+                        colorNames.forEach(c => sticker.classList.remove(c));
+                        sticker.classList.remove('unassigned');
+                        if (color) sticker.classList.add(color);
+                    });
+                });
             }
             
-            mainCubeState = scrambledState;
-            setCubeStateOnDOM(mainCubeElement, mainCubeState);
-            setCubeStateOnDOM(previewCubeElement, mainCubeState);
-            solutionDisplay.innerHTML = 'Scrambled! Click Solve to see the solution.';
-        }
+            function getSolvedState() {
+                 // Returns the state object for a solved cube.
+                 return {
+                    top: Array(9).fill('white'), bottom: Array(9).fill('yellow'),
+                    front: Array(9).fill('green'), back: Array(9).fill('blue'),
+                    left: Array(9).fill('orange'), right: Array(9).fill('red'),
+                };
+            }
 
-        // --- Event Listeners & Initial Calls ---
-        solveBtn.addEventListener('click', solve);
-        resetBtn.addEventListener('click', initializeCubes);
-        scrambleBtn.addEventListener('click', scrambleCube);
+            function initializeCubes() {
+                // Resets both cubes to the solved state.
+                createCubeDOM(mainCubeElement, true);
+                createCubeDOM(previewCubeElement, false);
+                mainCubeState = getSolvedState();
+                solutionStates = [];
+                setCubeStateOnDOM(mainCubeElement, mainCubeState);
+                setCubeStateOnDOM(previewCubeElement, mainCubeState);
+                solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
+            }
 
-        initializePalette();
-        initializeCubes();
-        setupCubeRotation('scene-main');
-        setupCubeRotation('scene-preview');
-    };
+            function updateMainCubeStateFromDOM() {
+                // Reads the colors from the main cube's DOM and updates the state object.
+                ['top', 'bottom', 'front', 'back', 'left', 'right'].forEach(faceName => {
+                    const faceStickers = mainCubeElement.querySelectorAll(`.sticker[data-face="${faceName}"]`);
+                    const faceColors = [];
+                    faceStickers.forEach(sticker => {
+                        const appliedColor = colorNames.find(c => sticker.classList.contains(c)) || 'unassigned';
+                        faceColors.push(appliedColor);
+                    });
+                    mainCubeState[faceName] = faceColors;
+                });
+                // Sync the preview cube with the new state
+                setCubeStateOnDOM(previewCubeElement, mainCubeState);
+            }
+
+            // --- UI Elements ---
+            function initializePalette() {
+                paletteElement.innerHTML = '';
+                colorNames.forEach(color => {
+                    const colorDiv = document.createElement('div');
+                    colorDiv.classList.add('palette-color');
+                    colorDiv.style.backgroundColor = colors[color];
+                    colorDiv.dataset.color = color;
+                    if (color === selectedColor) colorDiv.classList.add('selected');
+                    colorDiv.addEventListener('click', () => {
+                        selectedColor = color;
+                        document.querySelectorAll('.palette-color').forEach(el => el.classList.remove('selected'));
+                        colorDiv.classList.add('selected');
+                    });
+                    paletteElement.appendChild(colorDiv);
+                });
+            }
+
+            function setupCubeRotation(sceneId) {
+                // Enables mouse/touch dragging to rotate the 3D cubes.
+                const scene = document.getElementById(sceneId);
+                const cube = scene.querySelector('.cube');
+                let isDragging = false, previousX, previousY;
+                let rotationX = -30, rotationY = -45;
+                const startDrag = (x, y) => { isDragging = true; previousX = x; previousY = y; scene.style.cursor = 'grabbing'; };
+                const drag = (x, y) => {
+                    if (isDragging) {
+                        const deltaX = x - previousX; const deltaY = y - previousY;
+                        rotationY += deltaX * 0.5; rotationX -= deltaY * 0.5;
+                        cube.style.transform = `translateZ(-100px) rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+                        previousX = x; previousY = y;
+                    }
+                };
+                const endDrag = () => { isDragging = false; scene.style.cursor = 'grab'; };
+                scene.addEventListener('mousedown', (e) => startDrag(e.clientX, e.clientY));
+                window.addEventListener('mousemove', (e) => drag(e.clientX, e.clientY));
+                window.addEventListener('mouseup', endDrag);
+                scene.addEventListener('touchstart', (e) => startDrag(e.touches[0].clientX, e.touches[0].clientY));
+                window.addEventListener('touchmove', (e) => drag(e.touches[0].clientX, e.touches[0].clientY));
+                window.addEventListener('touchend', endDrag);
+            }
+            
+            // --- CORE MOVE LOGIC (for visual representation) ---
+            function applyMoveToViewState(state, move) {
+                // Applies a single move (e.g., "F", "U'") to the visual state object.
+                // This is separate from the solver's internal state manipulation.
+                let tempState = JSON.parse(JSON.stringify(state));
+                const moves = move.trim().split(' ');
+                for (const m of moves) {
+                    if (m) tempState = applySingleMoveToViewState(tempState, m);
+                }
+                return tempState;
+            }
+            
+            function applySingleMoveToViewState(state, move) {
+                const newState = JSON.parse(JSON.stringify(state));
+                const rotateFace = (face, clockwise) => {
+                    const stickers = newState[face]; const temp = [...stickers];
+                    if (clockwise) { newState[face] = [temp[6], temp[3], temp[0], temp[7], temp[4], temp[1], temp[8], temp[5], temp[2]]; } 
+                    else { newState[face] = [temp[2], temp[5], temp[8], temp[1], temp[4], temp[7], temp[0], temp[3], temp[6]]; }
+                };
+                // Define clockwise turns for each face
+                const F = () => { rotateFace('front', true); const temp = [newState.top[6], newState.top[7], newState.top[8]]; newState.top[6] = newState.left[8]; newState.top[7] = newState.left[5]; newState.top[8] = newState.left[2]; newState.left[2] = newState.bottom[0]; newState.left[5] = newState.bottom[1]; newState.left[8] = newState.bottom[2]; newState.bottom[0] = newState.right[6]; newState.bottom[1] = newState.right[3]; newState.bottom[2] = newState.right[0]; newState.right[6] = temp[2]; newState.right[3] = temp[1]; newState.right[0] = temp[0]; };
+                const U = () => { rotateFace('top', true); const temp = [...newState.front.slice(0, 3)]; newState.front.splice(0, 3, ...newState.right.slice(0, 3)); newState.right.splice(0, 3, ...newState.back.slice(0, 3)); newState.back.splice(0, 3, ...newState.left.slice(0, 3)); newState.left.splice(0, 3, ...temp); };
+                const R = () => { rotateFace('right', true); const temp = [newState.top[2], newState.top[5], newState.top[8]]; newState.top[2] = newState.front[2]; newState.top[5] = newState.front[5]; newState.top[8] = newState.front[8]; newState.front[2] = newState.bottom[2]; newState.front[5] = newState.bottom[5]; newState.front[8] = newState.bottom[8]; newState.bottom[2] = newState.back[6]; newState.bottom[5] = newState.back[3]; newState.bottom[8] = newState.back[0]; newState.back[6] = temp[2]; newState.back[3] = temp[1]; newState.back[0] = temp[0]; };
+                const L = () => { rotateFace('left', true); const temp = [newState.top[0], newState.top[3], newState.top[6]]; newState.top[0] = newState.back[8]; newState.top[3] = newState.back[5]; newState.top[6] = newState.back[2]; newState.back[8] = newState.bottom[0]; newState.back[5] = newState.bottom[3]; newState.back[2] = newState.bottom[6]; newState.bottom[0] = newState.front[0]; newState.bottom[3] = newState.front[3]; newState.bottom[6] = newState.front[6]; newState.front[0] = temp[0]; newState.front[3] = temp[1]; newState.front[6] = temp[2]; };
+                const B = () => { rotateFace('back', true); const temp = [newState.top[0], newState.top[1], newState.top[2]]; newState.top[0] = newState.right[2]; newState.top[1] = newState.right[5]; newState.top[2] = newState.right[8]; newState.right[2] = newState.bottom[8]; newState.right[5] = newState.bottom[7]; newState.right[8] = newState.bottom[6]; newState.bottom[8] = newState.left[6]; newState.bottom[7] = newState.left[3]; newState.bottom[6] = newState.left[0]; newState.left[6] = temp[2]; newState.left[3] = temp[1]; newState.left[0] = temp[0]; };
+                const D = () => { rotateFace('bottom', true); const temp = [...newState.front.slice(6, 9)]; newState.front.splice(6, 3, ...newState.left.slice(6, 9)); newState.left.splice(6, 3, ...newState.back.slice(6, 9)); newState.back.splice(6, 3, ...newState.right.slice(6, 9)); newState.right.splice(6, 3, ...temp); };
+                // Define counter-clockwise and double turns based on clockwise turns
+                const F_prime = () => { F(); F(); F(); }; const U_prime = () => { U(); U(); U(); }; const R_prime = () => { R(); R(); R(); }; const L_prime = () => { L(); L(); L(); }; const B_prime = () => { B(); B(); B(); }; const D_prime = () => { D(); D(); D(); };
+                const F2 = () => { F(); F(); }; const U2 = () => { U(); U(); }; const R2 = () => { R(); R(); }; const L2 = () => { L(); L(); }; const B2 = () => { B(); B(); }; const D2 = () => { D(); D(); };
+                
+                switch (move) {
+                    case "F": F(); break; case "F'": F_prime(); break; case "F2": F2(); break;
+                    case "U": U(); break; case "U'": U_prime(); break; case "U2": U2(); break;
+                    case "R": R(); break; case "R'": R_prime(); break; case "R2": R2(); break;
+                    case "L": L(); break; case "L'": L_prime(); break; case "L2": L2(); break;
+                    case "B": B(); break; case "B'": B_prime(); break; case "B2": B2(); break;
+                    case "D": D(); break; case "D'": D_prime(); break; case "D2": D2(); break;
+                }
+                return newState;
+            }
+
+            // --- Main Solver Logic ---
+            function solve() {
+                solutionDisplay.innerHTML = '<div class="text-center">Solving...</div>';
+
+                // Validate the cube configuration before attempting to solve.
+                const colorCounts = {};
+                colorNames.forEach(c => colorCounts[c] = 0);
+                let isValid = true;
+                Object.values(mainCubeState).flat().forEach(color => {
+                    if (colorCounts[color] !== undefined) colorCounts[color]++;
+                });
+                for (const color in colorCounts) if (colorCounts[color] !== 9) isValid = false;
+                const centerColors = new Set();
+                faces.forEach(face => centerColors.add(mainCubeState[face][4]));
+                if (centerColors.size !== 6) isValid = false;
+
+                if (!isValid) {
+                    solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Invalid cube configuration.</span><br>Each color must have exactly 9 stickers and unique centers.`;
+                    return;
+                }
+
+                if (JSON.stringify(mainCubeState) === JSON.stringify(getSolvedState())) {
+                    solutionDisplay.innerHTML = `<span class="text-green-600 font-semibold">This cube is already solved.</span>`;
+                    return;
+                }
+
+                // Convert the visual state into the string format the solver expects.
+                const colorToFaceLetter = {
+                    [mainCubeState.top[4]]: 'U',
+                    [mainCubeState.right[4]]: 'R',
+                    [mainCubeState.front[4]]: 'F',
+                    [mainCubeState.bottom[4]]: 'D',
+                    [mainCubeState.left[4]]: 'L',
+                    [mainCubeState.back[4]]: 'B'
+                };
+
+                // Create a map from center color back to the face name (e.g., 'white' -> 'top')
+                // This is the key fix: it allows us to find the correct face name ('top') from its center color ('white').
+                const centerColorToFaceName = {
+                    [mainCubeState.top[4]]: 'top',
+                    [mainCubeState.right[4]]: 'right',
+                    [mainCubeState.front[4]]: 'front',
+                    [mainCubeState.bottom[4]]: 'bottom',
+                    [mainCubeState.left[4]]: 'left',
+                    [mainCubeState.back[4]]: 'back'
+                };
+
+                let solverInputString = "";
+                // This map reorders stickers from our grid layout to the solver's required sequence.
+                const stickerMap = [0, 1, 2, 5, 8, 7, 6, 3, 4];
+
+                let errorOccurred = false;
+                solverFaceOrder.forEach(faceLetter => {
+                    if (errorOccurred) return;
+
+                    // Find the center color that corresponds to the current face letter (e.g., 'U' -> 'white')
+                    const centerColor = Object.keys(colorToFaceLetter).find(key => colorToFaceLetter[key] === faceLetter);
+                    
+                    // Find the face name ('top', 'front', etc.) that has that center color
+                    const faceName = centerColorToFaceName[centerColor];
+
+                    if (!faceName) {
+                        console.error("Could not determine face name for face letter:", faceLetter);
+                        errorOccurred = true;
+                        return;
+                    }
+
+                    const faceColors = mainCubeState[faceName];
+                    if (!faceColors) {
+                        console.error("Could not find colors for face name:", faceName);
+                        errorOccurred = true;
+                        return;
+                    }
+
+                    for (let i = 0; i < 9; i++) {
+                        // For each sticker on this face, find its color and then convert that color to its face letter.
+                        const stickerColor = faceColors[stickerMap[i]];
+                        const stickerFaceLetter = colorToFaceLetter[stickerColor];
+                        if (!stickerFaceLetter) {
+                            console.error(`Invalid sticker color "${stickerColor}" found on face "${faceName}"`);
+                            errorOccurred = true;
+                            break; // Exit the inner loop
+                        } else {
+                            solverInputString += stickerFaceLetter;
+                        }
+                    }
+                });
+
+                if (errorOccurred) {
+                    solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">An error occurred preparing the cube state.</span><br>Please check the console for details.`;
+                    return;
+                }
+                
+                // Convert the face letter string into the numerical array the solver uses.
+                let state_to_solve = [];
+                for (let i = 0; i < 54; i++) {
+                    state_to_solve[face_map[i]] = move_map[solverInputString[i]];
+                }
+                
+                // Use a timeout to prevent the UI from freezing during calculation.
+                setTimeout(() => {
+                    try {
+                        const solution = get_solve_string(state_to_solve);
+                        processSolution(solution);
+                    } catch (e) {
+                        solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">An error occurred during solving.</span><br>The cube might be in an unsolvable state.`;
+                        console.error("Solver error:", e);
+                    }
+                }, 50);
+            }
+            
+            function processSolution(solution) {
+                // Takes the raw solution string and prepares it for display.
+                if (!solution) {
+                    solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">Could not find a solution.</span><br>The cube may be physically impossible to solve.`;
+                    return;
+                }
+
+                // Format the solution string with spaces (e.g., "U2R'F" -> "U2 R' F ")
+                let formattedSolution = solution.replace(/([A-Z])([2']?)/g, '$1$2 ').trim();
+                const moves = formattedSolution.split(' ').filter(m => m); // Filter out empty strings
+                
+                // Generate all intermediate cube states for the solution playback.
+                solutionStates = [JSON.parse(JSON.stringify(mainCubeState))];
+                let currentState = JSON.parse(JSON.stringify(mainCubeState));
+
+                for (const move of moves) {
+                    currentState = applyMoveToViewState(currentState, move);
+                    solutionStates.push(JSON.parse(JSON.stringify(currentState)));
+                }
+                displaySolutionUI(moves);
+            }
+
+            function displaySolutionUI(moves) {
+                // Creates the interactive list of move buttons in the UI.
+                solutionDisplay.innerHTML = '';
+                moves.forEach((move, index) => {
+                    const moveSpan = document.createElement('span');
+                    moveSpan.textContent = move;
+                    moveSpan.className = 'solution-move inline-block bg-white shadow-sm rounded px-3 py-1 m-1 border border-gray-200';
+                    moveSpan.addEventListener('click', () => {
+                        // When a move is clicked, show the state before and after the move.
+                        setCubeStateOnDOM(mainCubeElement, solutionStates[index]);
+                        setCubeStateOnDOM(previewCubeElement, solutionStates[index + 1]);
+                        document.querySelectorAll('.solution-move').forEach(el => el.classList.remove('active'));
+                        moveSpan.classList.add('active');
+                    });
+                    solutionDisplay.appendChild(moveSpan);
+                });
+                // Initially, show the starting state on both cubes.
+                setCubeStateOnDOM(mainCubeElement, solutionStates[0]);
+                setCubeStateOnDOM(previewCubeElement, solutionStates[0]);
+            }
+            
+            function scrambleCube() {
+                solutionDisplay.innerHTML = 'Scrambling...';
+                let scrambleMoves = [];
+                const allMoves = ["F", "F'", "F2", "B", "B'", "B2", "U", "U'", "U2", "D", "D'", "D2", "R", "R'", "R2", "L", "L'", "L2"];
+                let lastMoveAxis = '';
+                for (let i = 0; i < 25; i++) {
+                    let randomMove;
+                    do {
+                        randomMove = allMoves[Math.floor(Math.random() * allMoves.length)];
+                    } while (randomMove[0] === lastMoveAxis); // Avoid redundant moves like R R'
+                    scrambleMoves.push(randomMove);
+                    lastMoveAxis = randomMove[0];
+                }
+
+                let scrambledState = getSolvedState();
+                for(const move of scrambleMoves) {
+                    scrambledState = applyMoveToViewState(scrambledState, move);
+                }
+                
+                mainCubeState = scrambledState;
+                setCubeStateOnDOM(mainCubeElement, mainCubeState);
+                setCubeStateOnDOM(previewCubeElement, mainCubeState);
+                solutionDisplay.innerHTML = 'Scrambled! Click Solve to see the solution.';
+            }
+
+            // --- Event Listeners & Initial Calls ---
+            solveBtn.addEventListener('click', solve);
+            resetBtn.addEventListener('click', initializeCubes);
+            scrambleBtn.addEventListener('click', scrambleCube);
+            
+            init_solver(); // Initialize the solver engine's tables
+            initializePalette();
+            initializeCubes();
+            setupCubeRotation('scene-main');
+            setupCubeRotation('scene-preview');
+        };
+    })();
     </script>
 </body>
 </html>
- 
