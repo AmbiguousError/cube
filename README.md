@@ -43,7 +43,3 @@ Everything lives in `index.html`:
 - The solving algorithm is a layer-by-layer ("beginner's method") solver:
   cross → corners → F2L → OLL → PLL. It isn't move-count-optimized, just
   correct — expect roughly 100-150 moves per solution.
-
-See `CLAUDE.md` for a deeper architectural walkthrough if you're working on
-the code, and `HANDOVER.md` for the history/rationale behind the current
-solver implementation.
