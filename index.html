@@ -161,94 +161,361 @@
         // The entire solver logic is placed inside a string to create a Web Worker.
         // This moves the heavy computation to a background thread, preventing UI freeze.
         const workerScript = `
-            let move, move_map, face_map, face_map_rev, solve_string;
+            // Layer-by-layer ("beginner's method") solver. State: {U,D,F,B,L,R},
+            // each a 9-array of face-letter labels in the same row-major sticker
+            // order as the main thread's face arrays; solved iff
+            // state[face][i] === face for all face, i.
+            const FACES = ['U', 'D', 'F', 'B', 'L', 'R'];
 
-            function init_solver() {
-                move = [
-                    [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 20, 21, 22, 23, 16, 17, 18, 19, 15, 12, 13, 14, 39, 36, 37, 38, 31, 28, 29, 30, 43, 40, 41, 42, 35, 32, 33, 34, 47, 44, 45, 46],
-                    [8, 9, 10, 11, 4, 5, 6, 7, 3, 0, 1, 2, 16, 17, 18, 19, 20, 21, 22, 23, 27, 24, 25, 26, 31, 28, 29, 30, 35, 32, 33, 34, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47],
-                    [0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11, 7, 4, 5, 6, 23, 20, 21, 22, 19, 16, 17, 18, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47],
-                    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 40, 41, 42, 43, 44, 45, 46, 47, 38, 39, 36, 37, 34, 35, 32, 33],
-                    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 16, 21, 22, 23, 20, 25, 26, 27, 24, 29, 30, 31, 28, 33, 34, 35, 32, 37, 38, 39, 36, 41, 42, 43, 40, 45, 46, 47, 44],
-                    [1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
-                ];
-                move_map = { 'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5 };
-                face_map = [4, 5, 6, 7, 12, 13, 14, 15, 8, 9, 10, 11, 20, 21, 22, 23, 16, 17, 18, 19, 28, 29, 30, 31, 32, 33, 34, 35, 40, 41, 42, 43, 44, 45, 46, 47, 36, 37, 38, 39, 24, 25, 26, 27, 0, 1, 2, 3];
-                face_map_rev = [];
-                for (let i = 0; i < face_map.length; i++) face_map_rev[face_map[i]] = i;
+            function cloneState(s) {
+                const n = {};
+                for (const f of FACES) n[f] = s[f].slice();
+                return n;
             }
 
-            function get_solve_string(state) {
-                solve_string = '';
-                let a = [], b = [], c, d, e, f = 0, g = 0, h, i = 0, j, k, l = 0, m, o, p = 0, w = 0, x;
-                for (; i < 48; i++) { a[i] = face_map_rev[state[i]]; b[i] = Math.floor(a[i] / 8); }
-                for (i = 0; i < 8; i++) {
-                    c = 0;
-                    for (j = 0; j < 7; j++) {
-                        d = 7 - j; k = a[c + j];
-                        if (k !== i) {
-                            for (l = j + 1; l < 8; l++) { if (a[c + l] === i) break; }
-                            e = a.slice(c + j, c + 8);
-                            for (m = j; m < 8; m++) a[c + m] = e[(l - j + m - j) % (8 - j)];
+            function rotateFaceCW(grid) {
+                return [grid[6], grid[3], grid[0], grid[7], grid[4], grid[1], grid[8], grid[5], grid[2]];
+            }
+
+            function turnU(s) {
+                const n = cloneState(s);
+                n.U = rotateFaceCW(s.U);
+                n.F.splice(0, 3, ...s.R.slice(0, 3));
+                n.R.splice(0, 3, ...s.B.slice(0, 3));
+                n.B.splice(0, 3, ...s.L.slice(0, 3));
+                n.L.splice(0, 3, ...s.F.slice(0, 3));
+                return n;
+            }
+            function turnD(s) {
+                const n = cloneState(s);
+                n.D = rotateFaceCW(s.D);
+                n.F.splice(6, 3, ...s.L.slice(6, 9));
+                n.L.splice(6, 3, ...s.B.slice(6, 9));
+                n.B.splice(6, 3, ...s.R.slice(6, 9));
+                n.R.splice(6, 3, ...s.F.slice(6, 9));
+                return n;
+            }
+            function turnF(s) {
+                const n = cloneState(s);
+                n.F = rotateFaceCW(s.F);
+                n.U[6] = s.L[8]; n.U[7] = s.L[5]; n.U[8] = s.L[2];
+                n.L[2] = s.D[0]; n.L[5] = s.D[1]; n.L[8] = s.D[2];
+                n.D[0] = s.R[6]; n.D[1] = s.R[3]; n.D[2] = s.R[0];
+                n.R[0] = s.U[6]; n.R[3] = s.U[7]; n.R[6] = s.U[8];
+                return n;
+            }
+            function turnB(s) {
+                const n = cloneState(s);
+                n.B = rotateFaceCW(s.B);
+                n.U[0] = s.R[2]; n.U[1] = s.R[5]; n.U[2] = s.R[8];
+                n.R[2] = s.D[8]; n.R[5] = s.D[7]; n.R[8] = s.D[6];
+                n.D[8] = s.L[6]; n.D[7] = s.L[3]; n.D[6] = s.L[0];
+                n.L[6] = s.U[0]; n.L[3] = s.U[1]; n.L[0] = s.U[2];
+                return n;
+            }
+            function turnL(s) {
+                const n = cloneState(s);
+                n.L = rotateFaceCW(s.L);
+                n.U[0] = s.B[8]; n.U[3] = s.B[5]; n.U[6] = s.B[2];
+                n.B[8] = s.D[0]; n.B[5] = s.D[3]; n.B[2] = s.D[6];
+                n.D[0] = s.F[0]; n.D[3] = s.F[3]; n.D[6] = s.F[6];
+                n.F[0] = s.U[0]; n.F[3] = s.U[3]; n.F[6] = s.U[6];
+                return n;
+            }
+            function turnR(s) {
+                const n = cloneState(s);
+                n.R = rotateFaceCW(s.R);
+                n.U[2] = s.F[2]; n.U[5] = s.F[5]; n.U[8] = s.F[8];
+                n.F[2] = s.D[2]; n.F[5] = s.D[5]; n.F[8] = s.D[8];
+                n.D[2] = s.B[6]; n.D[5] = s.B[3]; n.D[8] = s.B[0];
+                n.B[6] = s.U[2]; n.B[3] = s.U[5]; n.B[0] = s.U[8];
+                return n;
+            }
+
+            const BASE_TURN = { U: turnU, D: turnD, F: turnF, B: turnB, L: turnL, R: turnR };
+
+            function applyMove(state, move) {
+                const base = move[0];
+                const suffix = move.slice(1);
+                const n = suffix === '2' ? 2 : suffix === "'" ? 3 : 1;
+                let s = state;
+                for (let i = 0; i < n; i++) s = BASE_TURN[base](s);
+                return s;
+            }
+
+            function applyMoves(state, moves) {
+                let s = state;
+                for (const m of moves) s = applyMove(s, m);
+                return s;
+            }
+
+            function isSolved(state) {
+                return FACES.every(f => state[f].every(v => v === f));
+            }
+
+            // --- Piece location tables (validated adjacency) ---
+            const CORNER_SLOTS = {
+                UFL: ['U6', 'F0', 'L2'], UFR: ['U8', 'F2', 'R0'],
+                UBL: ['U0', 'B2', 'L0'], UBR: ['U2', 'B0', 'R2'],
+                DFL: ['D0', 'F6', 'L8'], DFR: ['D2', 'F8', 'R6'],
+                DBL: ['D6', 'B8', 'L6'], DBR: ['D8', 'B6', 'R8'],
+            };
+            const EDGE_SLOTS = {
+                UF: ['U7', 'F1'], UL: ['U3', 'L1'], UR: ['U5', 'R1'], UB: ['U1', 'B1'],
+                DF: ['D1', 'F7'], DL: ['D3', 'L7'], DR: ['D5', 'R7'], DB: ['D7', 'B7'],
+                FL: ['F3', 'L5'], FR: ['F5', 'R3'], BL: ['L3', 'B5'], BR: ['R5', 'B3'],
+            };
+
+            function parseFI(fi) { return [fi[0], parseInt(fi.slice(1))]; }
+            function getLabelsAtSlot(state, slot) {
+                return slot.map(fi => { const [f, i] = parseFI(fi); return state[f][i]; });
+            }
+            function findCorner(state, labelSet) {
+                const want = [...labelSet].sort().join('');
+                for (const name of Object.keys(CORNER_SLOTS)) {
+                    const labels = getLabelsAtSlot(state, CORNER_SLOTS[name]);
+                    if ([...labels].sort().join('') === want) return { name, labels, slot: CORNER_SLOTS[name] };
+                }
+                throw new Error('corner not found: ' + labelSet);
+            }
+            function findEdge(state, labelSet) {
+                const want = [...labelSet].sort().join('');
+                for (const name of Object.keys(EDGE_SLOTS)) {
+                    const labels = getLabelsAtSlot(state, EDGE_SLOTS[name]);
+                    if ([...labels].sort().join('') === want) return { name, labels, slot: EDGE_SLOTS[name] };
+                }
+                throw new Error('edge not found: ' + labelSet);
+            }
+
+            // Empirically verified (BFS-searched) sequences that pop whatever
+            // occupies a middle-layer slot up into the U layer without
+            // disturbing the D layer at all.
+            const MIDDLE_EXTRACT = {
+                FL: "F2 U2 F U2 F2", FR: "F2 U2 F U2 F2",
+                BL: "L2 U2 L U2 L2", BR: "R2 U2 R U2 R2",
+            };
+            // Verified sequences that pop a middle-slot occupant to U while
+            // ALSO preserving any other already-placed F2L edge (needed once
+            // F2L solving is underway, since MIDDLE_EXTRACT above can disturb
+            // a same-face F2L neighbor).
+            const MIDDLE_EXTRACT_F2L_SAFE = {
+                FL: "F U F' U' L' U' L", FR: "F R' F' R F' U' F",
+                BL: "L U L' U' B' U' B", BR: "R B' R' B R' U' R",
+            };
+
+            // Verified (BFS-searched) sequences that pop a wrongly-placed
+            // corner out of a D-layer slot into the U layer, without
+            // disturbing the D-cross or any other already-placed D-corner.
+            const WRONG_D_CORNER_EXTRACT = {
+                DFL: "F U F'", DFR: "F' U F", DBL: "B' U B", DBR: "B U B'",
+            };
+
+            function solveCube(state) {
+                let s = state;
+                let moves = [];
+                const push = (mvs) => { for (const m of mvs) { s = applyMove(s, m); moves.push(m); } };
+
+                // ================= Stage 1: D-cross =================
+                const crossOrder = ['F', 'R', 'B', 'L'];
+                const dOutAlgs = { F: "U L F' L'", R: "U F R' F'", B: "U R B' R'", L: "U B L' B'" };
+                for (const sideLabel of crossOrder) {
+                    const target = 'D' + sideLabel;
+                    for (let guard = 0; guard < 40; guard++) {
+                        const { name, labels, slot } = findEdge(s, ['D', sideLabel]);
+                        const dIdx = slot.findIndex(fi => fi[0] === 'D');
+                        if (name === target && labels[dIdx] === 'D') break;
+
+                        if (name[0] === 'D' || name[1] === 'D') {
+                            const otherFace = name.replace('D', '');
+                            push([otherFace + '2']);
+                            continue;
+                        }
+                        if (['UF', 'UR', 'UB', 'UL'].includes(name)) {
+                            if (name !== 'U' + sideLabel) { push(['U']); continue; }
+                            const uIdx = slot.findIndex(fi => fi[0] === 'U');
+                            if (labels[uIdx] === 'D') {
+                                push([sideLabel + '2']);
+                            } else {
+                                push(dOutAlgs[sideLabel].split(' '));
+                            }
+                            continue;
+                        }
+                        push(MIDDLE_EXTRACT[name].split(' '));
+                    }
+                }
+                // ================= Stage 2: D-corners =================
+                const cornerConfigs = {
+                    DFR: { sides: ['F', 'R'], algs: { D: "F' R' F2 R F", F: "F' U' F", R: "R U R'" } },
+                    DFL: { sides: ['F', 'L'], algs: { D: "F L F2 L' F'", F: "F U F'", L: "L' U' L" } },
+                    DBR: { sides: ['B', 'R'], algs: { D: "B R B2 R' B'", B: "B U B'", R: "R' U' R" } },
+                    DBL: { sides: ['B', 'L'], algs: { D: "B' L' B2 L B", B: "B' U' B", L: "L U L'" } },
+                };
+                for (const [target, { sides: [s1, s2], algs }] of Object.entries(cornerConfigs)) {
+                    for (let guard = 0; guard < 40; guard++) {
+                        const { name, labels, slot } = findCorner(s, ['D', s1, s2]);
+                        const dIdx = slot.findIndex(fi => fi[0] === 'D');
+                        if (name === target && labels[dIdx] === 'D') break;
+
+                        if (name[0] === 'D') {
+                            push(WRONG_D_CORNER_EXTRACT[name].split(' '));
+                            continue;
+                        }
+                        const curSides = new Set(name.slice(1).split(''));
+                        const wantSides = new Set([s1, s2]);
+                        const same = [...curSides].every(c => wantSides.has(c));
+                        if (!same) { push(['U']); continue; }
+
+                        const uIdx = slot.findIndex(fi => fi[0] === 'U');
+                        const uFacing = labels[uIdx];
+                        push(algs[uFacing].split(' '));
+                    }
+                }
+                // ================= Stage 3: F2L edges (middle layer) =================
+                const edgeConfigs = {
+                    FR: { sides: ['F', 'R'], algs: { R: "U F R' F' R F' U' F", F: "F' U2 F U2 R U R'" } },
+                    FL: { sides: ['F', 'L'], algs: { L: "U L' U2 L U2 F U F'", F: "F U2 F' U2 L' U' L" } },
+                    BR: { sides: ['B', 'R'], algs: { R: "U B' R B R' B U B'", B: "B U B' U' R' U' R" } },
+                    BL: { sides: ['B', 'L'], algs: { L: "U L U2 L' U2 B' U' B", B: "B' U B U L U' L'" } },
+                };
+                for (const [target, { sides: [sideA, sideB], algs }] of Object.entries(edgeConfigs)) {
+                    for (let guard = 0; guard < 40; guard++) {
+                        const { name, labels, slot } = findEdge(s, [sideA, sideB]);
+                        const correctlyPlaced = name === target && slot.every((fi, idx) => labels[idx] === fi[0]);
+                        if (correctlyPlaced) break;
+
+                        if (name === target || (!name.includes('U'))) {
+                            push(MIDDLE_EXTRACT_F2L_SAFE[name].split(' '));
+                            continue;
+                        }
+                        if (name !== 'UF') { push(['U']); continue; }
+                        const u7 = labels[slot.findIndex(fi => fi === 'U7')];
+                        push(algs[u7].split(' '));
+                    }
+                }
+                // ================= Stage 4: orient U edges (2-look OLL, edges) =================
+                const lineAlg = ['F', 'R', 'U', "R'", "U'", "F'"];
+                const lShapeAlg = ['F', 'U', 'R', "U'", "R'", "F'"];
+                const uEdgeOriented = () => ['U1', 'U3', 'U5', 'U7'].map(fi => s[fi[0]][parseInt(fi[1])] === 'U');
+                for (let guard = 0; guard < 8; guard++) {
+                    const o = uEdgeOriented();
+                    const cnt = o.filter(Boolean).length;
+                    if (cnt === 4) break;
+                    if (cnt === 0) { push(lineAlg); continue; }
+                    const oppositeOriented = (o[0] && o[3]) || (o[1] && o[2]);
+                    let applied = false;
+                    for (let pre = 0; pre < 4 && !applied; pre++) {
+                        const alg = oppositeOriented ? lineAlg : lShapeAlg;
+                        const trial = applyMoves(s, alg);
+                        if (['U1', 'U3', 'U5', 'U7'].every(fi => trial[fi[0]][parseInt(fi[1])] === 'U')) {
+                            push(alg);
+                            applied = true;
+                        } else {
+                            push(['U']);
                         }
                     }
                 }
-                while (f < 87e5) {
-                    h = a.slice(8, 16).concat(a.slice(24, 32));
-                    for (i = 0; i < 16; i++) f = f * 2 + (h[i] > 3);
-                    if (f !== 0) break;
-                    apply_move_to_solver_state(0, a); apply_move_to_solver_state(3, a);
-                    w++;
-                }
-                x = (s) => "UDFBRL".substr(s, 1);
-                o = (s, l) => { for (let i = 0; i < l; i++) apply_move_to_solver_state(s, a); solve_string += x(s) + (l === 3 ? "'" : (l === 2 ? "2" : "")); };
-                for (i = 0; i < w; i++) { o(0, 1); o(3, 3); }
-                function search(d, q, t) {
-                    if (d === 0) return q === 0 && t === 0;
-                    let h = a.slice(q, q + 8);
-                    for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) if (h[i] > h[j]) f++;
-                    h = a.slice(t, t + 8);
-                    for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) if (h[i] > h[j]) g++;
-                    for (let s = 1; s < 5; s++) {
-                        for (let l = 1; l < 4; l++) { o(s, l); if (search(d - 1, q, t)) return true; o(s, 4 - l); }
+                // ================= Stage 5: orient U corners (2-look OLL, corners) =================
+                const sune = ['R', 'U', "R'", 'U', 'R', 'U2', "R'"];
+                const antisune = ['R', 'U2', "R'", "U'", 'R', "U'", "R'"];
+                const orientedCount = (st) => ['U0', 'U2', 'U6', 'U8'].filter(fi => st[fi[0]][parseInt(fi[1])] === 'U').length;
+                const cornerKey = (st) => ['U0', 'U2', 'U6', 'U8'].map(fi => st[fi[0]][parseInt(fi[1])]).join('');
+                if (orientedCount(s) < 4) {
+                    let frontier = [{ state: s, moves: [] }];
+                    const seen = new Set([cornerKey(s)]);
+                    let solutionMoves = null;
+                    for (let depth = 0; depth < 4 && !solutionMoves; depth++) {
+                        const next = [];
+                        for (const { state: st, moves: mvs } of frontier) {
+                            for (const alg of [sune, antisune]) {
+                                for (let pre = 0; pre < 4 && !solutionMoves; pre++) {
+                                    const trialMoves = Array(pre).fill('U').concat(alg);
+                                    const trial = applyMoves(st, trialMoves);
+                                    if (orientedCount(trial) === 4) { solutionMoves = [...mvs, ...trialMoves]; break; }
+                                    const k = cornerKey(trial);
+                                    if (!seen.has(k)) { seen.add(k); next.push({ state: trial, moves: [...mvs, ...trialMoves] }); }
+                                }
+                                if (solutionMoves) break;
+                            }
+                            if (solutionMoves) break;
+                        }
+                        frontier = next;
                     }
-                    return false;
+                    if (solutionMoves) push(solutionMoves);
                 }
-                search(99, 8, 24);
-                let z = (d, q) => { let f = 0; for (let i = 0; i < 4; i++) if (b[d + i] !== q) f++; return f; };
-                let A = (d, q, t) => {
-                    if (z(d, q) === 0) return;
-                    if (z(d, q) < 4) for (let i = 0; i < 4; i++) { if (b[d + i] !== q) { o(t, 1); o(0, 1); o(t, 3); o(0, 3); } o(0, 1); }
-                    o(t, 2); A(d, q, t);
+                // ================= Stage 6: permute U corners (2-look PLL, corners) =================
+                const cornerPermAlg = ["R'", 'F', "R'", 'B2', 'R', "F'", "R'", 'B2', 'R2'];
+                const cornerPermKey = (st) => ['UFL', 'UFR', 'UBL', 'UBR'].map(n => getLabelsAtSlot(st, CORNER_SLOTS[n]).slice().sort().join('')).join('|');
+                const cornersPermuted = (st) => {
+                    for (const name of ['UFL', 'UFR', 'UBL', 'UBR']) {
+                        const want = new Set(['U', ...name.slice(1).split('')]);
+                        const labels = new Set(getLabelsAtSlot(st, CORNER_SLOTS[name]));
+                        if ([...want].some(w => !labels.has(w))) return false;
+                    }
+                    return true;
                 };
-                A(0, b[0], 2); A(4, b[4], 1); A(16, b[16], 4); A(20, b[20], 5);
-                if (b[24] !== b[26]) o(3, 1);
-                if (b[24] !== b[25]) { o(1, 2); o(4, 2); o(0, 1); o(1, 2); o(4, 2); o(0, 3); }
-                if (b[0] !== b[24]) { o(2, 2); o(3, 2); if (b[0] !== b[24]) { o(1, 2); o(4, 2); o(0, 2); o(1, 2); o(4, 2); } }
-                o(3, 2);
-                for (i = 0; i < 4; i++) { if (a[i] !== i) p++; }
-                if (p > 0) {
-                    if (a[0] === 1) o(3, 3); else if (a[0] === 2) o(3, 2); else if (a[0] === 3) o(3, 1);
-                    if (a[1] === 2) o(2, 2); else if (a[1] === 3) o(2, 2);
-                    if (a[0] !== 0 || a[1] !== 1 || a[2] !== 2) { o(1, 3); o(2, 1); o(1, 1); o(2, 3); o(1, 3); o(2, 3); o(1, 1); o(2, 1); p = 0; for (i = 0; i < 4; i++) { if (a[i] !== i) p++; } if (p > 0) { o(1, 3); o(2, 1); o(1, 1); o(2, 3); o(1, 3); o(2, 3); o(1, 1); o(2, 1); } }
+                if (!cornersPermuted(s)) {
+                    let frontier = [{ state: s, moves: [] }];
+                    const seen = new Set([cornerPermKey(s)]);
+                    let solutionMoves = null;
+                    for (let depth = 0; depth < 4 && !solutionMoves; depth++) {
+                        const next = [];
+                        for (const { state: st, moves: mvs } of frontier) {
+                            for (let pre = 0; pre < 4 && !solutionMoves; pre++) {
+                                const trialMoves = Array(pre).fill('U').concat(cornerPermAlg);
+                                const trial = applyMoves(st, trialMoves);
+                                if (cornersPermuted(trial)) { solutionMoves = [...mvs, ...trialMoves]; break; }
+                                const k = cornerPermKey(trial);
+                                if (!seen.has(k)) { seen.add(k); next.push({ state: trial, moves: [...mvs, ...trialMoves] }); }
+                            }
+                            if (solutionMoves) break;
+                        }
+                        frontier = next;
+                    }
+                    if (solutionMoves) push(solutionMoves);
                 }
-                if (p === 0 && a[4] !== 4) { o(2, 2); o(3, 2); o(1, 2); o(4, 2); o(0, 2); o(1, 2); o(4, 2); }
-                return solve_string;
-            }
-
-            function apply_move_to_solver_state(m, state) {
-                let mov = move[m];
-                let new_state = [];
-                for (let i = 0; i < 48; i++) new_state[i] = state[mov[i]];
-                for (let i = 0; i < 48; i++) state[i] = new_state[i];
+                // ================= Stage 7: permute U edges (2-look PLL, edges) =================
+                const edgePermAlg = ['R', "U'", 'R', 'U', 'R', 'U', 'R', "U'", "R'", "U'", 'R2'];
+                const edgePermKey = (st) => ['UF', 'UR', 'UB', 'UL'].map(n => getLabelsAtSlot(st, EDGE_SLOTS[n]).slice().sort().join('')).join('|');
+                const edgesPermuted = (st) => {
+                    for (const name of ['UF', 'UR', 'UB', 'UL']) {
+                        const want = new Set(['U', name[1]]);
+                        const labels = new Set(getLabelsAtSlot(st, EDGE_SLOTS[name]));
+                        if ([...want].some(w => !labels.has(w))) return false;
+                    }
+                    return true;
+                };
+                if (!edgesPermuted(s)) {
+                    let frontier = [{ state: s, moves: [] }];
+                    const seen = new Set([edgePermKey(s)]);
+                    let solutionMoves = null;
+                    for (let depth = 0; depth < 4 && !solutionMoves; depth++) {
+                        const next = [];
+                        for (const { state: st, moves: mvs } of frontier) {
+                            for (let pre = 0; pre < 4 && !solutionMoves; pre++) {
+                                // Conjugate (U^pre ... U'^pre) so any already-solved
+                                // corners (untouched by edgePermAlg) return to their
+                                // exact slots instead of staying rotated by 'pre'.
+                                const trialMoves = Array(pre).fill('U').concat(edgePermAlg).concat(Array(pre).fill("U'"));
+                                const trial = applyMoves(st, trialMoves);
+                                if (edgesPermuted(trial)) { solutionMoves = [...mvs, ...trialMoves]; break; }
+                                const k = edgePermKey(trial);
+                                if (!seen.has(k)) { seen.add(k); next.push({ state: trial, moves: [...mvs, ...trialMoves] }); }
+                            }
+                            if (solutionMoves) break;
+                        }
+                        frontier = next;
+                    }
+                    if (solutionMoves) push(solutionMoves);
+                }
+                if (!isSolved(s)) throw new Error('solver failed to reach solved state');
+                return moves;
             }
 
             self.onmessage = function(e) {
-                const state_to_solve = e.data;
-                init_solver();
+                const labeledState = e.data;
                 try {
-                    const solution = get_solve_string(state_to_solve);
-                    self.postMessage({ status: 'success', solution: solution });
+                    const moves = solveCube(labeledState);
+                    self.postMessage({ status: 'success', solution: moves.join('') });
                 } catch (error) {
                     self.postMessage({ status: 'error', message: error.message });
                 }
@@ -279,7 +546,6 @@
             let selectedColor = 'white';
             let mainCubeState = {};
             let solutionStates = [];
-            const solverFaceOrder = ['U', 'R', 'F', 'D', 'L', 'B'];
 
             function createCubeDOM(parentElement, isInteractive) {
                 parentElement.innerHTML = '';
@@ -407,9 +673,9 @@
                 };
                 const F = () => { rotateFace('front', true); const temp = [newState.top[6], newState.top[7], newState.top[8]]; newState.top[6] = newState.left[8]; newState.top[7] = newState.left[5]; newState.top[8] = newState.left[2]; newState.left[2] = newState.bottom[0]; newState.left[5] = newState.bottom[1]; newState.left[8] = newState.bottom[2]; newState.bottom[0] = newState.right[6]; newState.bottom[1] = newState.right[3]; newState.bottom[2] = newState.right[0]; newState.right[6] = temp[2]; newState.right[3] = temp[1]; newState.right[0] = temp[0]; };
                 const U = () => { rotateFace('top', true); const temp = [...newState.front.slice(0, 3)]; newState.front.splice(0, 3, ...newState.right.slice(0, 3)); newState.right.splice(0, 3, ...newState.back.slice(0, 3)); newState.back.splice(0, 3, ...newState.left.slice(0, 3)); newState.left.splice(0, 3, ...temp); };
-                const R = () => { rotateFace('right', true); const temp = [newState.top[2], newState.top[5], newState.top[8]]; newState.top[2] = newState.front[2]; newState.top[5] = newState.front[5]; newState.top[8] = newState.front[8]; newState.front[2] = newState.bottom[2]; newState.front[5] = newState.bottom[5]; newState.front[8] = newState.bottom[8]; newState.bottom[2] = newState.back[6]; newState.bottom[5] = newState.back[3]; newState.bottom[8] = newState.back[0]; newState.back[6] = temp[2]; newState.back[3] = temp[1]; newState.back[0] = temp[0]; };
+                const R = () => { rotateFace('right', true); const temp = [newState.top[2], newState.top[5], newState.top[8]]; newState.top[2] = newState.front[2]; newState.top[5] = newState.front[5]; newState.top[8] = newState.front[8]; newState.front[2] = newState.bottom[2]; newState.front[5] = newState.bottom[5]; newState.front[8] = newState.bottom[8]; newState.bottom[2] = newState.back[6]; newState.bottom[5] = newState.back[3]; newState.bottom[8] = newState.back[0]; newState.back[6] = temp[0]; newState.back[3] = temp[1]; newState.back[0] = temp[2]; };
                 const L = () => { rotateFace('left', true); const temp = [newState.top[0], newState.top[3], newState.top[6]]; newState.top[0] = newState.back[8]; newState.top[3] = newState.back[5]; newState.top[6] = newState.back[2]; newState.back[8] = newState.bottom[0]; newState.back[5] = newState.bottom[3]; newState.back[2] = newState.bottom[6]; newState.bottom[0] = newState.front[0]; newState.bottom[3] = newState.front[3]; newState.bottom[6] = newState.front[6]; newState.front[0] = temp[0]; newState.front[3] = temp[1]; newState.front[6] = temp[2]; };
-                const B = () => { rotateFace('back', true); const temp = [newState.top[0], newState.top[1], newState.top[2]]; newState.top[0] = newState.right[2]; newState.top[1] = newState.right[5]; newState.top[2] = newState.right[8]; newState.right[2] = newState.bottom[8]; newState.right[5] = newState.bottom[7]; newState.right[8] = newState.bottom[6]; newState.bottom[8] = newState.left[6]; newState.bottom[7] = newState.left[3]; newState.bottom[6] = newState.left[0]; newState.left[6] = temp[2]; newState.left[3] = temp[1]; newState.left[0] = temp[0]; };
+                const B = () => { rotateFace('back', true); const temp = [newState.top[0], newState.top[1], newState.top[2]]; newState.top[0] = newState.right[2]; newState.top[1] = newState.right[5]; newState.top[2] = newState.right[8]; newState.right[2] = newState.bottom[8]; newState.right[5] = newState.bottom[7]; newState.right[8] = newState.bottom[6]; newState.bottom[8] = newState.left[6]; newState.bottom[7] = newState.left[3]; newState.bottom[6] = newState.left[0]; newState.left[6] = temp[0]; newState.left[3] = temp[1]; newState.left[0] = temp[2]; };
                 const D = () => { rotateFace('bottom', true); const temp = [...newState.front.slice(6, 9)]; newState.front.splice(6, 3, ...newState.left.slice(6, 9)); newState.left.splice(6, 3, ...newState.back.slice(6, 9)); newState.back.splice(6, 3, ...newState.right.slice(6, 9)); newState.right.splice(6, 3, ...temp); };
                 const F_prime = () => { F(); F(); F(); }; const U_prime = () => { U(); U(); U(); }; const R_prime = () => { R(); R(); R(); }; const L_prime = () => { L(); L(); L(); }; const B_prime = () => { B(); B(); B(); }; const D_prime = () => { D(); D(); D(); };
                 const F2 = () => { F(); F(); }; const U2 = () => { U(); U(); }; const R2 = () => { R(); R(); }; const L2 = () => { L(); L(); }; const B2 = () => { B(); B(); }; const D2 = () => { D(); D(); };
@@ -454,43 +720,26 @@
                     [mainCubeState.front[4]]: 'F', [mainCubeState.bottom[4]]: 'D',
                     [mainCubeState.left[4]]: 'L', [mainCubeState.back[4]]: 'B'
                 };
-                const centerColorToFaceName = {
-                    [mainCubeState.top[4]]: 'top', [mainCubeState.right[4]]: 'right',
-                    [mainCubeState.front[4]]: 'front', [mainCubeState.bottom[4]]: 'bottom',
-                    [mainCubeState.left[4]]: 'left', [mainCubeState.back[4]]: 'back'
-                };
 
-                let solverInputString = "";
-                const stickerMap = [0, 1, 2, 5, 8, 7, 6, 3, 4];
+                // Translate each face's colors into canonical U/R/F/D/L/B
+                // labels (same row-major sticker order the solver's move
+                // engine uses), so the worker doesn't need to know colors at all.
+                const faceNameToLetter = { top: 'U', bottom: 'D', front: 'F', back: 'B', left: 'L', right: 'R' };
+                const labeledState = {};
                 let errorOccurred = false;
-
-                solverFaceOrder.forEach(faceLetter => {
-                    if (errorOccurred) return;
-                    const centerColor = Object.keys(colorToFaceLetter).find(key => colorToFaceLetter[key] === faceLetter);
-                    const faceName = centerColorToFaceName[centerColor];
-                    if (!faceName) { errorOccurred = true; return; }
-                    const faceColors = mainCubeState[faceName];
-                    if (!faceColors) { errorOccurred = true; return; }
-                    for (let i = 0; i < 9; i++) {
-                        const stickerColor = faceColors[stickerMap[i]];
-                        const stickerFaceLetter = colorToFaceLetter[stickerColor];
-                        if (!stickerFaceLetter) { errorOccurred = true; break; }
-                        else { solverInputString += stickerFaceLetter; }
-                    }
+                faces.forEach(faceName => {
+                    labeledState[faceNameToLetter[faceName]] = mainCubeState[faceName].map(color => {
+                        const letter = colorToFaceLetter[color];
+                        if (!letter) errorOccurred = true;
+                        return letter;
+                    });
                 });
 
                 if (errorOccurred) {
                     solutionDisplay.innerHTML = `<span class="text-red-600 font-semibold">An error occurred preparing the cube state.</span>`;
                     return;
                 }
-                
-                let state_to_solve = [];
-                const move_map = { 'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5 };
-                const face_map = [4, 5, 6, 7, 12, 13, 14, 15, 8, 9, 10, 11, 20, 21, 22, 23, 16, 17, 18, 19, 28, 29, 30, 31, 32, 33, 34, 35, 40, 41, 42, 43, 44, 45, 46, 47, 36, 37, 38, 39, 24, 25, 26, 27, 0, 1, 2, 3];
-                for (let i = 0; i < 54; i++) {
-                    state_to_solve[face_map[i]] = move_map[solverInputString[i]];
-                }
-                
+
                 // --- Worker Communication ---
                 solverWorker = new Worker(workerUrl);
 
@@ -510,7 +759,7 @@
                     solverWorker.terminate();
                 };
 
-                solverWorker.postMessage(state_to_solve);
+                solverWorker.postMessage(labeledState);
             }
             
             function processSolution(solution) {
