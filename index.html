@@ -114,7 +114,19 @@
                     <button id="solve-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-md">Solve Cube</button>
                     <button id="reset-btn" class="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors shadow-md">Reset All</button>
                 </div>
-                <h2 class="text-lg font-semibold">Solution Steps</h2>
+                <div class="w-full flex items-center justify-between">
+                    <h2 class="text-lg font-semibold">Solution Steps</h2>
+                    <div class="flex items-center gap-2">
+                        <select id="autoplay-speed" class="text-sm border border-gray-300 rounded-lg px-2 py-1 bg-white" title="Playback speed">
+                            <option value="900">Slow</option>
+                            <option value="450" selected>Normal</option>
+                            <option value="200">Fast</option>
+                        </select>
+                        <button id="autoplay-btn" disabled class="flex items-center gap-1 bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold text-sm py-1.5 px-3 rounded-lg hover:bg-green-700 transition-colors shadow-md">
+                            <span id="autoplay-icon">▶</span> <span id="autoplay-label">Play</span>
+                        </button>
+                    </div>
+                </div>
                 <div id="solution-display" class="w-full h-64 bg-gray-100 rounded-lg p-4 overflow-y-auto font-mono text-lg text-gray-700 shadow-inner">
                     Click 'Solve' to begin...
                 </div>
@@ -535,6 +547,10 @@
             const resetBtn = document.getElementById('reset-btn');
             const scrambleBtn = document.getElementById('scramble-btn');
             const solutionDisplay = document.getElementById('solution-display');
+            const autoplayBtn = document.getElementById('autoplay-btn');
+            const autoplayIcon = document.getElementById('autoplay-icon');
+            const autoplayLabel = document.getElementById('autoplay-label');
+            const autoplaySpeed = document.getElementById('autoplay-speed');
 
             // --- Constants and State ---
             const faces = ['top', 'bottom', 'front', 'back', 'left', 'right'];
@@ -546,6 +562,8 @@
             let selectedColor = 'white';
             let mainCubeState = {};
             let solutionStates = [];
+            let currentStepIndex = -1;
+            let autoPlayTimer = null;
 
             function createCubeDOM(parentElement, isInteractive) {
                 parentElement.innerHTML = '';
@@ -593,10 +611,13 @@
             }
 
             function initializeCubes() {
+                stopAutoPlay();
+                autoplayBtn.disabled = true;
                 createCubeDOM(mainCubeElement, true);
                 createCubeDOM(previewCubeElement, false);
                 mainCubeState = getSolvedState();
                 solutionStates = [];
+                currentStepIndex = -1;
                 setCubeStateOnDOM(mainCubeElement, mainCubeState);
                 setCubeStateOnDOM(previewCubeElement, mainCubeState);
                 solutionDisplay.innerHTML = "Solver ready. Click 'Solve' to begin...";
@@ -692,6 +713,8 @@
             }
 
             function solve() {
+                stopAutoPlay();
+                autoplayBtn.disabled = true;
                 solutionDisplay.innerHTML = '<div class="text-center">Solving...</div>';
 
                 const colorCounts = {};
@@ -782,24 +805,72 @@
             }
 
             function displaySolutionUI(moves) {
+                stopAutoPlay();
                 solutionDisplay.innerHTML = '';
                 moves.forEach((move, index) => {
                     const moveSpan = document.createElement('span');
                     moveSpan.textContent = move;
                     moveSpan.className = 'solution-move inline-block bg-white shadow-sm rounded px-3 py-1 m-1 border border-gray-200';
                     moveSpan.addEventListener('click', () => {
-                        setCubeStateOnDOM(mainCubeElement, solutionStates[index]);
-                        setCubeStateOnDOM(previewCubeElement, solutionStates[index + 1]);
-                        document.querySelectorAll('.solution-move').forEach(el => el.classList.remove('active'));
-                        moveSpan.classList.add('active');
+                        stopAutoPlay();
+                        goToStep(index);
                     });
                     solutionDisplay.appendChild(moveSpan);
                 });
+                currentStepIndex = -1;
                 setCubeStateOnDOM(mainCubeElement, solutionStates[0]);
                 setCubeStateOnDOM(previewCubeElement, solutionStates[0]);
+                autoplayBtn.disabled = moves.length === 0;
             }
-            
+
+            // Shows the state right before move `index` on the main cube, and
+            // the state right after it on the preview cube (matching what
+            // clicking that move step has always done), highlighting it in
+            // the step list and keeping it scrolled into view.
+            function goToStep(index) {
+                currentStepIndex = index;
+                setCubeStateOnDOM(mainCubeElement, solutionStates[index]);
+                setCubeStateOnDOM(previewCubeElement, solutionStates[Math.min(index + 1, solutionStates.length - 1)]);
+                const moveSpans = solutionDisplay.querySelectorAll('.solution-move');
+                moveSpans.forEach(el => el.classList.remove('active'));
+                const activeSpan = moveSpans[index];
+                if (activeSpan) {
+                    activeSpan.classList.add('active');
+                    activeSpan.scrollIntoView({ block: 'nearest' });
+                }
+            }
+
+            function stopAutoPlay() {
+                if (autoPlayTimer) {
+                    clearInterval(autoPlayTimer);
+                    autoPlayTimer = null;
+                }
+                autoplayIcon.textContent = '▶';
+                autoplayLabel.textContent = 'Play';
+            }
+
+            function startAutoPlay() {
+                const totalMoves = solutionStates.length - 1;
+                if (totalMoves <= 0) return;
+                if (currentStepIndex >= totalMoves - 1) currentStepIndex = -1; // restart from the beginning
+                autoplayIcon.textContent = '⏸';
+                autoplayLabel.textContent = 'Pause';
+                autoPlayTimer = setInterval(() => {
+                    if (currentStepIndex >= totalMoves - 1) { stopAutoPlay(); return; }
+                    goToStep(currentStepIndex + 1);
+                }, parseInt(autoplaySpeed.value, 10));
+            }
+
+            function toggleAutoPlay() {
+                if (autoPlayTimer) stopAutoPlay();
+                else startAutoPlay();
+            }
+
             function scrambleCube() {
+                stopAutoPlay();
+                autoplayBtn.disabled = true;
+                solutionStates = [];
+                currentStepIndex = -1;
                 solutionDisplay.innerHTML = 'Scrambling...';
                 let scrambleMoves = [];
                 const allMoves = ["F", "F'", "F2", "B", "B'", "B2", "U", "U'", "U2", "D", "D'", "D2", "R", "R'", "R2", "L", "L'", "L2"];
@@ -828,7 +899,11 @@
             solveBtn.addEventListener('click', solve);
             resetBtn.addEventListener('click', initializeCubes);
             scrambleBtn.addEventListener('click', scrambleCube);
-            
+            autoplayBtn.addEventListener('click', toggleAutoPlay);
+            autoplaySpeed.addEventListener('change', () => {
+                if (autoPlayTimer) { stopAutoPlay(); startAutoPlay(); }
+            });
+
             initializePalette();
             initializeCubes();
             setupCubeRotation('scene-main');
